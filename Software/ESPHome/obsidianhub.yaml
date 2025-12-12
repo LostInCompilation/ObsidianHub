@@ -26,6 +26,10 @@ substitutions:
   version: "1.0.2"
   num_dashboard_pages: 3
 
+dashboard_import:
+  package_import_url: github://LostInCompilation/ObsidianHub/Software/ESPHome/obsidianhub.yaml@main
+  import_full_config: true
+
 ###############################################################
 # Device Configuration
 ###############################################################
@@ -66,6 +70,9 @@ preferences:
 ###############################################################
 logger:
   level: INFO
+  logs:
+    wifi: WARN
+    api: WARN
 
 debug:
   update_interval: 60s
@@ -266,9 +273,9 @@ globals:
   - id: display_brightness
     type: float
     restore_value: yes
-    initial_value: "0.0f"
+    initial_value: "1.0f"
 
-  # --- Render spinners ---
+  # --- Spinner Rendering ---
   - id: show_time_sync_spinner
     type: bool
     restore_value: no
@@ -283,7 +290,7 @@ globals:
   - id: sleep_timeout_milliseconds
     type: uint32_t
     restore_value: yes
-    initial_value: "20000"
+    initial_value: "30000"
 
   - id: is_display_sleeping
     type: bool
@@ -295,7 +302,7 @@ globals:
     restore_value: no
     initial_value: "0"
 
-  - id: is_fade_out_active
+  - id: is_fade_out_in_progress
     type: bool
     restore_value: no
     initial_value: "false"
@@ -309,7 +316,7 @@ globals:
   - id: graph_duration_minutes
     type: uint32_t
     restore_value: yes
-    initial_value: "120"  # Default: 120 minutes
+    initial_value: "30"
 
   # --- Page Navigation ---
   - id: current_dashboard_page
@@ -445,24 +452,24 @@ image:
   # --- Main Dashboard Icons ---
   - file: mdi:thermometer
     id: icon_temperature
-    resize: 24x24
     type: binary
+    resize: 24x24
 
   - file: mdi:water-percent
     id: icon_humidity
-    resize: 24x24
     type: binary
+    resize: 24x24
 
   # --- Air Qualiy Dashboard Icons ---
   - file: mdi:leaf
     id: icon_leaf
-    resize: 31x31
     type: binary
+    resize: 31x31
 
   - file: mdi:molecule-co2
     id: icon_co2
-    resize: 30x26
     type: binary
+    resize: 30x26
 
   - file: "img/cloud_icon.png"
     id: icon_cloud
@@ -475,34 +482,39 @@ image:
     type: binary
     invert_alpha: false
 
+  - file: "img/warning.png"
+    id: icon_warning
+    type: binary
+    invert_alpha: true
+
   # --- System Monitor Icons ---
   - file: mdi:web
     id: icon_web
-    resize: 19x19
     type: binary
+    resize: 19x19
 
   - file: mdi:harddisk
     id: icon_hdd
-    resize: 19x19
     type: binary
+    resize: 19x19
 
   # --- Menu Icons ---
   - file: mdi:cog
     id: icon_gear
-    resize: 22x22
     type: binary
+    resize: 22x22
 
   - file: "img/wifi.png"
     id: icon_wifi
+    type: binary
     resize: 20x18
     invert_alpha: true
-    type: binary
 
   # --- No WiFi Icon ---
   - file: mdi:wifi-off
     id: icon_wifi_off
-    resize: 32x32
     type: binary
+    resize: 32x32
 
   # --- Reboot Confirmation Page Icon ---
   - file: "img/info.png"
@@ -556,7 +568,7 @@ script:
           id(last_interaction_time_ms) = millis();
 
           // Only wake if currently sleeping or fading out
-          if (!id(is_display_sleeping) && !id(is_fade_out_active))
+          if (!id(is_display_sleeping) && !id(is_fade_out_in_progress))
             return;
 
           // Restore LEDs from flash memory
@@ -568,7 +580,7 @@ script:
           id(main_display).set_contrast(id(display_brightness));
 
           id(is_display_sleeping) = false;
-          id(is_fade_out_active) = false;
+          id(is_fade_out_in_progress) = false;
 
   # Show menu on long press of rotary encoder (wait 600ms and read button again)
   - id: check_for_long_press
@@ -757,8 +769,8 @@ interval:
           id(saved_key2_led_state)[2] = current.get_green();
           id(saved_key2_led_state)[3] = current.get_blue();
 
-          // Save is_on() only when not sleeping
-          if (!id(is_fade_out_active) && !id(is_display_sleeping))
+          // Save is_on() state only when not sleeping
+          if (!id(is_fade_out_in_progress) && !id(is_display_sleeping))
           {
             id(saved_status_led_state)[4] = id(led_status).current_values.is_on() ? 1.0f : 0.0f;
             id(saved_key1_led_state)[4] = id(led_key1).current_values.is_on() ? 1.0f : 0.0f;
@@ -913,22 +925,22 @@ interval:
                   idle_time = 0;
 
                   // Cancel any ongoing fade out
-                  if (id(is_fade_out_active))
+                  if (id(is_fade_out_in_progress))
                   {
-                      id(is_fade_out_active) = false;
+                      id(is_fade_out_in_progress) = false;
                       id(main_display).set_contrast(id(display_brightness));
                   }
               }
 
               // Start fade out when timeout reached
-              if (idle_time >= id(sleep_timeout_milliseconds) && !id(is_fade_out_active))
+              if (idle_time >= id(sleep_timeout_milliseconds) && !id(is_fade_out_in_progress))
               {
-                  id(is_fade_out_active) = true;
+                  id(is_fade_out_in_progress) = true;
                   fade_start = now;
               }
 
               // Perform fade out
-              if (id(is_fade_out_active))
+              if (id(is_fade_out_in_progress))
               {
                   const uint32_t elapsed = now - fade_start;
                   const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
@@ -943,7 +955,7 @@ interval:
                       // Enter sleep mode
                       id(main_display).set_contrast(0.0f);
                       id(is_display_sleeping) = true;
-                      id(is_fade_out_active) = false;
+                      id(is_fade_out_in_progress) = false;
                       id(main_display).stop_poller();
 
                       // Turn off LEDs if enabled
@@ -1096,7 +1108,7 @@ display:
                              !std::isnan(id(sensor_eco2).state) &&
                              !std::isnan(id(sensor_tvoc).state);
 
-          if (!id(ens160_sensor_ready))
+          if (false && !id(ens160_sensor_ready))
           {
             unsigned long uptime_sec = millis() / 1000;
             int minutes_remaining = 3 - (uptime_sec / 60);
@@ -1115,42 +1127,66 @@ display:
           }
 
           // AQI
-          it.image(8, -2, id(icon_leaf));
-          it.printf(39, -5, id(font_aqi_number), TextAlign::TOP_LEFT, "%d", (int)id(sensor_aqi).state);
+          const int aqi_value = (int)id(sensor_aqi).state;
+          int aqi_number_x_offset = 0;
+          int aqi_number_x_gap_extend = 0;
 
-          const int test = 1;
+          // Responsive layout
+          if (aqi_value == 1)
+          {
+            aqi_number_x_gap_extend = -1;
+          }
+          else if (aqi_value == 4)
+          {
+            aqi_number_x_offset = -3;
+            aqi_number_x_gap_extend = 4;
+          }
+          else if (aqi_value == 5)
+          {
+            aqi_number_x_offset = -5;
+            aqi_number_x_gap_extend = 3;
+          }
 
-          switch ((int)id(sensor_aqi).state)
+          // Show icon
+          if (aqi_value <= 3)
+            it.image(6 + aqi_number_x_offset, -3, id(icon_leaf));
+          else
+            it.image(6 + aqi_number_x_offset, -3, id(icon_warning));
+
+          // Big AQI number
+          it.printf(37 + aqi_number_x_offset + aqi_number_x_gap_extend, -6, id(font_aqi_number), TextAlign::TOP_LEFT, "%d", aqi_value);
+
+          switch (aqi_value)
           {
             case 1:
-              it.printf(126, 14, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "EXCELLENT");
+              it.printf(126, 13, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "EXCELLENT");
             break;
 
             case 2:
-              it.printf(122, 14, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "GOOD");
+              it.printf(123, 13, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "GOOD");
             break;
 
             case 3:
-              it.printf(126, 14, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "MODERATE");
+              it.printf(127, 13, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "MODERATE");
             break;
 
             case 4:
-              it.printf(122, 14, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "POOR");
+              it.printf(123, 13, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "POOR");
             break;
 
             case 5:
-              it.printf(126, 14, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "UNHEALTHY");
+              it.printf(128, 13, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "UNHEALTHY");
             break;
 
             default:
-              it.printf(105, 14, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "---");
+              it.printf(105, 13, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "---");
             break;
           }
 
           // ***********************************
           // CO2
-          it.image(24, 29, id(icon_co2));
-          it.image(7, 36, id(icon_cloud));
+          it.image(25, 28, id(icon_co2));
+          it.image(8, 36, id(icon_cloud));
 
           // Get the width of the value text
           int value_x = 19;
@@ -1165,7 +1201,7 @@ display:
 
           // ***********************************
           // TVOC
-          it.image(66, 35, id(icon_tvoc));
+          it.image(68, 35, id(icon_tvoc));
 
           // Get the width of the value text
           value_x = 88;
@@ -1938,7 +1974,7 @@ graphical_display_menu:
 graph:
   # Temperature
   - id: graph_temp
-    duration: 120min
+    duration: 30min
     width: 128
     height: 52
     border: true
@@ -1956,7 +1992,7 @@ graph:
 
   # Humidity
   - id: graph_humid
-    duration: 120min
+    duration: 30min
     width: 128
     height: 53
     border: true
@@ -1974,7 +2010,7 @@ graph:
 
   # Air Quality
   - id: graph_aqi
-    duration: 120min
+    duration: 30min
     width: 128
     height: 53
     border: true
@@ -1992,7 +2028,7 @@ graph:
 
   # eCO2
   - id: graph_eco2
-    duration: 120min
+    duration: 30min
     width: 128
     height: 52
     border: true
@@ -2010,7 +2046,7 @@ graph:
 
   # TVOC
   - id: graph_tvoc
-    duration: 120min
+    duration: 30min
     width: 128
     height: 52
     border: true
@@ -2740,7 +2776,7 @@ number:
     optimistic: true
     min_value: 0       # 0 = never sleep
     max_value: 7200    # Max 2 hours
-    initial_value: 20  # Default 20 seconds
+    initial_value: 30
     step: 1
     unit_of_measurement: "s"
     mode: box
