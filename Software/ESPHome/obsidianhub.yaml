@@ -35,7 +35,7 @@ esphome:
   comment: "SmartHome Dashboard with multiple environmental sensors"
   project:
     name: "Marc.ObsidianHub"
-    version: "2.0.0"
+    version: "${version}"
   platformio_options:
     board_build.f_flash: 80000000L
     board_build.flash_mode: qio
