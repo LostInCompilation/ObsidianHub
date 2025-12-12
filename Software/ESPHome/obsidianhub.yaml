@@ -20,7 +20,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.4"
+  version: "1.0.1"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -361,7 +361,7 @@ globals:
 ###############################################################
 font:
   # --- Digital Clock Display ---
-  - file: "fonts/advanced_dot_digital.ttf"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/advanced_dot_digital.ttf"
     id: font_clock_large
     size: 20
     glyphs: "0123456789:"
@@ -391,17 +391,17 @@ font:
     size: 12
     glyphs: "EXCLNTMODRAUHY"
 
-  - file: "fonts/bdf/9x15.bdf"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/9x15.bdf"
     id: font_eco2_tvoc_values
     glyphs: "0123456789pmb"
 
   # --- Diverse Elements ---
-  - file: "fonts/bdf/7x13.bdf"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13.bdf"
     id: font7x13
-  - file: "fonts/bdf/7x13B.bdf"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13B.bdf"
     id: font7x13B
 
-  - file: "fonts/bdf/6x12.bdf"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
 
   # --- Headers ---
@@ -465,18 +465,18 @@ image:
     type: binary
     resize: 30x26
 
-  - file: "img/cloud_icon.png"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/cloud_icon.png"
     id: icon_cloud
     type: binary
     invert_alpha: false
     resize: 58x11
 
-  - file: "img/tvoc_icon.png"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/tvoc_icon.png"
     id: icon_tvoc
     type: binary
     invert_alpha: false
 
-  - file: "img/warning.png"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/warning.png"
     id: icon_warning
     type: binary
     invert_alpha: true
@@ -498,7 +498,7 @@ image:
     type: binary
     resize: 22x22
 
-  - file: "img/wifi.png"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/wifi.png"
     id: icon_wifi
     type: binary
     resize: 20x18
@@ -511,13 +511,13 @@ image:
     resize: 32x32
 
   # --- Reboot Confirmation Page Icon ---
-  - file: "img/info.png"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/info.png"
     id: icon_info_big
     type: binary
     invert_alpha: false
 
   # --- Copyright Text (About page) ---
-  - file: "img/copyright.png"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/copyright.png"
     id: icon_copyright
     type: binary
     invert_alpha: false
@@ -526,18 +526,18 @@ image:
 # Animations
 ###############################################################
 animation:
-  - file: "img/boot_animation.gif"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/boot_animation.gif"
     id: animation_boot
     type: binary
     invert_alpha: false
 
-  - file: "img/spinner1.gif"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/spinner1.gif"
     id: animation_spinner1
     type: binary
     invert_alpha: true
     resize: 35x35
 
-  - file: "img/spinner2.gif"
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/spinner2.gif"
     id: animation_spinner2
     type: binary
     invert_alpha: false
