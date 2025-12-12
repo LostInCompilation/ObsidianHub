@@ -82,7 +82,7 @@ debug:
 api:
   id: api_component
   encryption:
-    key: !secret obsidian_hub_api_key
+    key: !secret obsidian_hub_api_key "h5PmbvHuELjG+4JcpXIM0FtZipehBWZpxHOrtCI8yFk="
 
   on_client_connected:
     - delay: 500ms
