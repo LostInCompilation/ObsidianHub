@@ -23,7 +23,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.2"
+  version: "1.0.3"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -87,8 +87,6 @@ api:
   id: api_component
   encryption:
     key: "h5PmbvHuELjG+4JcpXIM0FtZipehBWZpxHOrtCI8yFk="
-
-  #reboot_timeout: 0s     # <-- Uncomment this if using MQTT exclusively
 
   on_client_connected:
     - delay: 500ms
