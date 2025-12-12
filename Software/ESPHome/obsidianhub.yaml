@@ -33,6 +33,8 @@ esphome:
   name: obsidianhub
   friendly_name: ObsidianHub
   comment: "SmartHome Dashboard with multiple environmental sensors"
+  name_add_mac_suffix: true
+  min_version: 2025.11.3
   project:
     name: "Marc.ObsidianHub"
     version: "${version}"
@@ -104,9 +106,13 @@ api:
         id(brightness_control).publish_state(pct);
 
 ###############################################################
-# Enable HTTP Request
+# HTTP Requests
 ###############################################################
 http_request:
+  follow_redirects: true
+  redirect_limit: 5
+  timeout: 7s
+  #watchdog_timeout: 30s
 
 ###############################################################
 # Over-The-Air Firmware Updates
@@ -118,6 +124,8 @@ ota:
     on_begin:
         then:
           - lambda: |-
+              id(return_to_last_saved_page_with_delay).stop();
+
               id(ota_progress) = 0.0f;
               id(main_display).show_page(id(page_is_ota_updating));
               id(wake_display_and_reset_timer).execute();
@@ -144,6 +152,8 @@ ota:
     on_begin:
       then:
         - lambda: |-
+            id(return_to_last_saved_page_with_delay).stop();
+
             id(ota_progress) = 0.0f;
             id(main_display).show_page(id(page_is_ota_updating));
             id(wake_display_and_reset_timer).execute();
@@ -163,6 +173,32 @@ ota:
             id(ota_progress) = -1.0f;
             id(main_display).update();
 
+# Update Component
+update:
+  - platform: http_request
+    name: Firmware Update (HTTP)
+    id: update_firmware_component_http
+    update_interval: 1min
+    device_class: "firmware"
+    entity_category: "config"
+    #icon:
+    #internal: true
+    source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
+    on_update_available:
+      then:
+        - lambda: |-
+            id(return_to_last_saved_page_with_delay).stop();
+
+            id(main_display).show_page(id(page_update_available));
+            id(wake_display_and_reset_timer).execute();
+
+            // Status LEDs
+            auto call = id(led_status).turn_on();
+            call.set_rgb(0.0f, 1.0f, 0.85f);
+            call.set_brightness(0.8f);
+            call.set_effect("Blue Pulse");
+            call.perform();
+
 ###############################################################
 # WiFi Configuration
 ###############################################################
@@ -181,14 +217,13 @@ wifi:
         {
           // Show dashboard and set status LED to green
           id(main_display).show_page(id(page_main_dashboard));
+          id(wake_display_and_reset_timer).execute();
 
           auto call = id(led_status).turn_on();
           call.set_rgb(0.0f, 1.0f, 0.0f);
           call.set_brightness(0.7f);
           call.set_effect("None");
           call.perform();
-
-          id(wake_display_and_reset_timer).execute();
         }
 
         id(wifi_has_been_setup_by_user) = true;
@@ -816,6 +851,7 @@ interval:
             if (ap_mode_timer > 6)
             {
               id(wake_display_and_reset_timer).execute();
+              id(return_to_last_saved_page_with_delay).stop();
 
               // Show AP page and do nothing
               id(main_display).show_page(id(page_wifi_ap_mode));
@@ -902,7 +938,7 @@ interval:
                     id(main_display).show_page(id(page_wifi_ap_mode));
 
                     // Init LEDs
-                    // Status LEDs
+                    // Status LED
                     auto call = id(led_status).turn_on();
                     call.set_rgb(0.0f, 0.0f, 1.0f);
                     call.set_brightness(0.8f);
@@ -1020,6 +1056,14 @@ display:
       - id: page_is_restarting
         lambda: |-
           it.printf(64, 32, id(font_ui_18_bold), TextAlign::CENTER, "Rebooting...");
+
+      # ============================================
+      # UPDATE AVAILABLE PAGE
+      # ============================================
+      - id: page_update_available
+        lambda: |-
+          it.printf(64, 25, id(font_ui_15_bold), TextAlign::CENTER, "Firmware Update");
+          it.printf(64, 40, id(font_ui_15_bold), TextAlign::CENTER, "Available");
 
       # ============================================
       # OTA UPDATING PAGE
@@ -1610,7 +1654,7 @@ display:
         lambda: |-
           // Header with info icon
           it.image(4, 5, id(icon_info_big));
-          it.printf(77, 0, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Restart");
+          it.printf(77, 0, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Reboot");
           it.printf(77, 16, id(font_ui_18_bold), TextAlign::TOP_CENTER, "required");
 
           // OK button
@@ -2663,6 +2707,8 @@ button:
     entity_category: "config"
     on_press:
       - lambda: |-
+          id(return_to_last_saved_page_with_delay).stop();
+
           // Show "Restarting..." page
           id(main_display).show_page(id(page_is_restarting));
           id(wake_display_and_reset_timer).execute();
@@ -2686,6 +2732,8 @@ button:
     entity_category: "config"
     on_press:
       - lambda: |-
+          id(return_to_last_saved_page_with_delay).stop();
+
           // Show "Restarting..." page
           id(main_display).show_page(id(page_is_restarting));
           id(wake_display_and_reset_timer).execute();
@@ -2753,8 +2801,10 @@ number:
 
           // Do nothing if still booting, on WiFi AP mode page or restart page
           if (!id(is_boot_complete)
+              || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_restarting))
+              || id(main_display).get_active_page() == id(page_is_restarting)
+              || id(main_display).get_active_page() == id(page_is_ota_updating))
             return;
 
           // Save current page and switch to brightness page

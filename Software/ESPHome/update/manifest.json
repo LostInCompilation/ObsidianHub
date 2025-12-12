@@ -1,0 +1,13 @@
+{
+  "name": "ObsidianHub",
+  "version": "1.0.4",
+  "builds": [
+    {
+      "chipFamily": "ESP32-C3",
+      "ota": {
+        "md5": "1234567890abcdef1234567890abcdef",
+        "path": "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/firmware_ota.bin"
+      }
+    }
+  ]
+}
