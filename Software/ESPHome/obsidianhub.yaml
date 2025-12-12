@@ -23,7 +23,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.2.0"
+  version: "1.1.2"
   num_dashboard_pages: 3
 
 ###############################################################
@@ -370,7 +370,7 @@ font:
       type: gfonts
       family: Roboto
       weight: 700
-    id: font_ui_aqi_number
+    id: font_aqi_number
     size: 33
     glyphs: "12345"
 
@@ -378,7 +378,7 @@ font:
       type: gfonts
       family: IBM Plex Sans
       weight: 700
-    id: font_ui_aqi_text_big
+    id: font_aqi_text_big
     size: 20
     glyphs: "GODPR-"
 
@@ -386,7 +386,7 @@ font:
       type: gfonts
       family: IBM Plex Sans
       weight: 700
-    id: font_ui_aqi_text_small
+    id: font_aqi_text_small
     size: 12
     glyphs: "EXCLNTMODRAUHY"
 
@@ -402,11 +402,6 @@ font:
 
   - file: "fonts/bdf/6x12.bdf"
     id: font6x12
-
-  # --- For Small Copyright Text ---
-  - file: "fonts/bdf/5x8.bdf"
-    id: font5x8
-    glyphs: "(C)205 MarcShoendf"
 
   # --- Headers ---
   - file:
@@ -424,11 +419,16 @@ font:
     id: font_ui_15_bold
     size: 15
 
-  # --------------------------------------------------------------
+  # --- Large Numbers ---
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 800
+    id: font_number_large
+    size: 37
+    glyphs: "0123456789shm \u0025"
 
-  # TODO clean up fonts
-
-  # --- IBM Plex Sans (UI Text) ---
+  # --- Big Font ---
   - file:
       type: gfonts
       #family: IBM Plex Sans
@@ -436,21 +436,7 @@ font:
       weight: 600
     id: font_ui_21_bold
     size: 21
-
-  # --- Roboto Bold (Large Numbers) ---
-  - file:
-      type: gfonts
-      family: Roboto
-      weight: 800
-    id: font_number_large
-    size: 37
-
-  - file:
-      type: gfonts
-      family: Roboto
-      weight: 700
-    id: font_number_medium
-    size: 16
+    glyphs: "ObsidanHuNo WF"
 
 ###############################################################
 # Images and Icons
@@ -475,7 +461,7 @@ image:
 
   - file: mdi:molecule-co2
     id: icon_co2
-    resize: 34x28
+    resize: 30x26
     type: binary
 
   - file: "img/cloud_icon.png"
@@ -518,9 +504,15 @@ image:
     resize: 32x32
     type: binary
 
-  # --- Reboot confirmation page icon ---
+  # --- Reboot Confirmation Page Icon ---
   - file: "img/info.png"
     id: icon_info_big
+    type: binary
+    invert_alpha: false
+
+  # --- Copyright Text (About page) ---
+  - file: "img/copyright.png"
+    id: icon_copyright
     type: binary
     invert_alpha: false
 
@@ -1009,7 +1001,7 @@ display:
             return;
           }
 
-          it.printf(64, 28, id(font_number_medium), TextAlign::TOP_CENTER,
+          it.printf(64, 28, id(font_ui_15_bold), TextAlign::TOP_CENTER,
                     "%.0f%%", id(ota_progress));
 
           // Progress bar
@@ -1124,40 +1116,40 @@ display:
 
           // AQI
           it.image(8, -2, id(icon_leaf));
-          it.printf(39, -5, id(font_ui_aqi_number), TextAlign::TOP_LEFT, "%d", (int)id(sensor_aqi).state);
+          it.printf(39, -5, id(font_aqi_number), TextAlign::TOP_LEFT, "%d", (int)id(sensor_aqi).state);
 
           const int test = 1;
 
           switch ((int)id(sensor_aqi).state)
           {
             case 1:
-              it.printf(126, 14, id(font_ui_aqi_text_small), TextAlign::CENTER_RIGHT, "EXCELLENT");
+              it.printf(126, 14, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "EXCELLENT");
             break;
 
             case 2:
-              it.printf(122, 14, id(font_ui_aqi_text_big), TextAlign::CENTER_RIGHT, "GOOD");
+              it.printf(122, 14, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "GOOD");
             break;
 
             case 3:
-              it.printf(126, 14, id(font_ui_aqi_text_small), TextAlign::CENTER_RIGHT, "MODERATE");
+              it.printf(126, 14, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "MODERATE");
             break;
 
             case 4:
-              it.printf(122, 14, id(font_ui_aqi_text_big), TextAlign::CENTER_RIGHT, "POOR");
+              it.printf(122, 14, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "POOR");
             break;
 
             case 5:
-              it.printf(126, 14, id(font_ui_aqi_text_small), TextAlign::CENTER_RIGHT, "UNHEALTHY");
+              it.printf(126, 14, id(font_aqi_text_small), TextAlign::CENTER_RIGHT, "UNHEALTHY");
             break;
 
             default:
-              it.printf(105, 14, id(font_ui_aqi_text_big), TextAlign::CENTER_RIGHT, "---");
+              it.printf(105, 14, id(font_aqi_text_big), TextAlign::CENTER_RIGHT, "---");
             break;
           }
 
           // ***********************************
           // CO2
-          it.image(24, 27, id(icon_co2));
+          it.image(24, 29, id(icon_co2));
           it.image(7, 36, id(icon_cloud));
 
           // Get the width of the value text
@@ -1418,7 +1410,7 @@ display:
           const int32_t seconds = id(sleep_timeout_milliseconds) / 1000;
           if (seconds == 0)
           {
-            it.printf(64, 27, id(font_number_medium), TextAlign::TOP_CENTER, "DISABLED");
+            it.printf(64, 27, id(font_ui_15_bold), TextAlign::TOP_CENTER, "DISABLED");
           }
           else if (seconds < 60)
           {
@@ -1574,7 +1566,7 @@ display:
         lambda: |-
           it.printf(64, 0, id(font_ui_21_bold), TextAlign::TOP_CENTER, "ObsidianHub");
           it.printf(64, 35, id(font_ui_15_bold), TextAlign::CENTER, "V${version}");
-          it.printf(64, 60, id(font5x8), TextAlign::BOTTOM_CENTER, "(C)2025 Marc Schoendorf");
+          it.image(1, 52, id(icon_copyright));
 
       # ============================================
       # MENU DETAIL: Connection Status
@@ -1586,15 +1578,15 @@ display:
 
           // WiFi status
           it.printf(1, 24, id(font7x13), TextAlign::TOP_LEFT, "WiFi:");
-          it.printf(127, 24, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(wifi_component).is_connected() ? "Connected" : "Not Connected");
+          it.printf(127, 24, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(wifi_component).is_connected() ? "Connected" : "Disconnected");
 
           // API status (Home Assistant)
-          it.printf(1, 37, id(font7x13), TextAlign::TOP_LEFT, "HA-API:");
-          it.printf(127, 37, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(api_component).is_connected() ? "Connected" : "Not Connected");
+          it.printf(1, 37, id(font7x13), TextAlign::TOP_LEFT, "HA:");
+          it.printf(127, 37, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(api_component).is_connected() ? "Connected" : "Disconnected");
 
           // MQTT status
           it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "MQTT:");
-          it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(mqtt_component).is_connected() ? "Connected" : "Not Connected");
+          it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(mqtt_component).is_connected() ? "Connected" : "Disconnected");
 
       # ============================================
       # MENU DETAIL: System Info
