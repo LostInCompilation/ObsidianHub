@@ -20,7 +20,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.1"
+  version: "1.0.2"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -82,25 +82,25 @@ debug:
 api:
   id: api_component
   encryption:
-    key: "h5PmbvHuELjG+4JcpXIM0FtZipehBWZpxHOrtCI8yFk="
+    key: !secret obsidian_hub_api_key
 
   on_client_connected:
     - delay: 500ms
     - lambda: |-
-        ESP_LOGI("brightness", "HA connected — performing brightness sync");
+        //ESP_LOGI("brightness", "HA connected — performing brightness sync");
 
         id(brightness_sync_boot).call();
 
         if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
         {
-          ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
+          //ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
           return;
         }
 
         float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
         uint32_t pct = clamp((int)lround(tmp), 0, 100);
 
-        ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
+        //ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
 
         id(brightness_control).publish_state(pct);
 
@@ -110,7 +110,7 @@ api:
 ota:
   - platform: esphome
     id: ota_component
-    password: "ObsidianHubOTA2025"
+    password: !secret obsidian_hub_ota_password
 
     on_begin:
       then:
@@ -141,7 +141,7 @@ wifi:
   #ssid: !secret wifi_ssid
   #password: !secret wifi_password
   #fast_connect: true
-  #power_save_mode: none
+  power_save_mode: none
   enable_btm: true
   enable_rrm: true
   id: wifi_component
@@ -180,12 +180,10 @@ captive_portal:
 # Uncomment to enable MQTT alongside or instead of Home Assistant API
 ###############################################################
 mqtt:
-  broker: 192.168.0.103
+  broker: !secret mqtt_broker
+  username: !secret mqtt_user
+  password: !secret mqtt_password
   port: 1883
-  #username: !secret mqtt_user
-  #password: !secret mqtt_password
-  username: "mqtt-user"
-  password: "mqtt-user"
   log_topic: null
   keepalive: 8s
   publish_nan_as_none: true
