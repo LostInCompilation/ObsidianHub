@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.4"
+  version: "1.0.5"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -966,7 +966,8 @@ interval:
                   && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
                   && id(main_display).get_active_page() != id(page_is_restarting)
                   && id(main_display).get_active_page() != id(page_wifi_ap_mode)
-                  && id(main_display).get_active_page() != id(page_is_ota_updating))
+                  && id(main_display).get_active_page() != id(page_is_ota_updating)
+                  && id(main_display).get_active_page() != id(page_update_available))
           {
               static uint32_t fade_start = 0;
               uint32_t idle_time = now - id(last_interaction_time_ms);
@@ -2298,11 +2299,12 @@ sensor:
           if (!id(is_boot_complete))
             return;
 
-          // Ignore encoder rotation on restart page or WiFi AP mode page
+          // Ignore encoder rotation
           if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_ota_updating))
+              || id(main_display).get_active_page() == id(page_is_ota_updating)
+              || id(main_display).get_active_page() == id(page_update_available))
             return;
 
           if (id(is_menu_visible))
@@ -2368,7 +2370,8 @@ sensor:
           if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_ota_updating))
+              || id(main_display).get_active_page() == id(page_is_ota_updating)
+              || id(main_display).get_active_page() == id(page_update_available))
             return;
 
           if (id(is_menu_visible))
@@ -2613,11 +2616,12 @@ binary_sensor:
     # On button down
     on_press:
       - lambda: |-
-          // Do nothing if still booting, on WiFi AP mode page or restart page
+          // Do nothing if still booting, on WiFi AP mode page, update (available) page or restart page
           if (!id(is_boot_complete)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
               || id(main_display).get_active_page() == id(page_is_restarting)
-              || id(main_display).get_active_page() == id(page_is_ota_updating))
+              || id(main_display).get_active_page() == id(page_is_ota_updating)
+              || id(main_display).get_active_page() == id(page_update_available))
             return;
 
           // Only ignore next short press if fully asleep (not just fading out into sleep)
@@ -2636,7 +2640,7 @@ binary_sensor:
           - lambda: |-
               id(check_for_long_press).stop();
 
-              // Do nothing if still booting, on WiFi AP mode page or restart page
+              // Do nothing if still booting, on WiFi AP mode page, update page or restart page
               if (!id(is_boot_complete)
                   || id(main_display).get_active_page() == id(page_wifi_ap_mode)
                   || id(main_display).get_active_page() == id(page_is_restarting)
