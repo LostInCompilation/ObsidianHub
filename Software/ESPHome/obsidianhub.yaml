@@ -20,7 +20,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.3"
+  version: "1.0.4"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -1102,7 +1102,7 @@ display:
                              !std::isnan(id(sensor_eco2).state) &&
                              !std::isnan(id(sensor_tvoc).state);
 
-          if (false && !id(ens160_sensor_ready))
+          if (!id(ens160_sensor_ready))
           {
             unsigned long uptime_sec = millis() / 1000;
             int minutes_remaining = 3 - (uptime_sec / 60);
