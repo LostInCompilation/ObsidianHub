@@ -36,7 +36,7 @@ esphome:
   comment: "SmartHome Dashboard with multiple environmental sensors"
   project:
     name: "Marc.ObsidianHub"
-    version: "${version}"
+    version: ${version}
   platformio_options:
     board_build.f_flash: 80000000L
     board_build.flash_mode: qio
@@ -54,13 +54,6 @@ esp32:
     type: esp-idf
     advanced:
       loop_task_stack_size: 16384
-
-###############################################################
-# Update Notifications
-###############################################################
-update:
-  - platform: esphome
-    name: "ObsidianHub Firmware"
 
 ###############################################################
 # Flash Memory Writing
@@ -89,7 +82,7 @@ debug:
 api:
   id: api_component
   encryption:
-    key: !secret obsidian_hub_api_key "h5PmbvHuELjG+4JcpXIM0FtZipehBWZpxHOrtCI8yFk="
+    key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
 
   on_client_connected:
     - delay: 500ms
@@ -117,7 +110,7 @@ api:
 ota:
   - platform: esphome
     id: ota_component
-    password: !secret obsidian_hub_ota_password "ObsidianHubOTA2025"
+    password: "ObsidianHubOTA2025"
 
     on_begin:
       then:
