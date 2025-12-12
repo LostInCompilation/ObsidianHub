@@ -33,7 +33,6 @@ esphome:
   name: obsidianhub
   friendly_name: ObsidianHub
   comment: "SmartHome Dashboard with multiple environmental sensors"
-  name_add_mac_suffix: true
   project:
     name: "Marc.ObsidianHub"
     version: "${version}"
@@ -110,8 +109,7 @@ api:
 ota:
   - platform: esphome
     id: ota_component
-    password: "59453e2da0582eac101ed3054f43fc81"
-    #password: "ObsidianHubOTA2025"
+    password: "ObsidianHubOTA2025"
 
     on_begin:
       then:
@@ -150,7 +148,18 @@ wifi:
   on_connect:
     - lambda: |-
         if (!id(wifi_has_been_setup_by_user) || id(main_display).get_active_page() == id(page_wifi_ap_mode))
+        {
+          // Show dashboard and set status LED to green
           id(main_display).show_page(id(page_main_dashboard));
+
+          auto call = id(led_status).turn_on();
+          call.set_rgb(0.0f, 1.0f, 0.0f);
+          call.set_brightness(0.7f);
+          call.set_effect("None");
+          call.perform();
+
+          id(wake_display_and_reset_timer).execute();
+        }
 
         id(wifi_has_been_setup_by_user) = true;
   on_disconnect:
@@ -771,9 +780,9 @@ interval:
     then:
       - lambda: |-
           static uint32_t ap_mode_timer = 0;
+          static bool leds_have_been_set = false;
 
-          // Check if we are in WiFi AP mode
-          if (!id(wifi_component).is_connected() && id(is_boot_complete))
+          if (!id(wifi_component).is_connected() && id(is_boot_complete) && id(wifi_has_been_setup_by_user))
           {
             ap_mode_timer++;
 
@@ -787,15 +796,23 @@ interval:
               id(is_menu_detail_visible) = false;
               id(is_menu_visible) = false;
 
-              auto call = id(led_status).make_call();
-              call.set_state(true);
-              call.set_effect("Rainbow");
-              call.perform();
+              // Status LEDs
+              if (!leds_have_been_set)
+              {
+                auto call = id(led_status).turn_on();
+                call.set_rgb(1.0f, 0.0f, 0.0f);
+                call.set_brightness(0.9f);
+                call.set_effect("Red Pulse");
+                call.perform();
+
+                leds_have_been_set = true;
+              }
             }
           }
           else
           {
             ap_mode_timer = 0;
+            leds_have_been_set = false;
           }
 
   # Handle boot animation and auto-sleep
@@ -851,9 +868,32 @@ interval:
 
                   // Show dashboard or WiFi setup page if not set up by user already
                   if (id(wifi_has_been_setup_by_user))
+                  {
                     id(main_display).show_page(id(page_main_dashboard));
+                  }
                   else
+                  {
                     id(main_display).show_page(id(page_wifi_ap_mode));
+
+                    // Init LEDs
+                    // Status LEDs
+                    auto call = id(led_status).turn_on();
+                    call.set_rgb(0.0f, 0.0f, 1.0f);
+                    call.set_brightness(0.8f);
+                    call.set_effect("Blue Pulse");
+                    call.perform();
+
+                    // Key LEDs
+                    call = id(led_key1).turn_on();
+                    call.set_rgb(1.0f, 1.0f, 0.9f);
+                    call.set_brightness(0.7f);
+                    call.perform();
+
+                    call = id(led_key2).turn_on();
+                    call.set_rgb(1.0f, 1.0f, 0.9f);
+                    call.set_brightness(0.7f);
+                    call.perform();
+                  }
               }
           }
           // ============================================
@@ -2026,6 +2066,18 @@ light:
           name: "Rainbow"
           speed: 8
           width: 50
+      - pulse:
+          name: "Blue Pulse"
+          transition_length: 1200ms
+          update_interval: 1200ms
+          min_brightness: 30%
+          max_brightness: 100%
+      - pulse:
+          name: "Red Pulse"
+          transition_length: 800ms
+          update_interval: 800ms
+          min_brightness: 30%
+          max_brightness: 100%
 
   - platform: partition
     name: "Left Key LED"
