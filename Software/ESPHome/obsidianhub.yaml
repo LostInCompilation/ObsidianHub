@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.3"
+  version: "1.0.4"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -104,13 +104,43 @@ api:
         id(brightness_control).publish_state(pct);
 
 ###############################################################
+# Enable HTTP Request
+###############################################################
+http_request:
+
+###############################################################
 # Over-The-Air Firmware Updates
 ###############################################################
 ota:
+  # HTTP
+  - platform: http_request
+    id: ota_component_http
+    on_begin:
+        then:
+          - lambda: |-
+              id(ota_progress) = 0.0f;
+              id(main_display).show_page(id(page_is_ota_updating));
+              id(wake_display_and_reset_timer).execute();
+    on_progress:
+      then:
+        - lambda: |-
+            id(ota_progress) = x;
+            id(main_display).update();
+    on_end:
+      then:
+        - lambda: |-
+            id(ota_progress) = 100.0f;
+            id(main_display).update();
+    on_error:
+      then:
+        - lambda: |-
+            id(ota_progress) = -1.0f;
+            id(main_display).update();
+
+  # ESPHome API
   - platform: esphome
     id: ota_component
     password: "ObsidianHubOTA2025"
-
     on_begin:
       then:
         - lambda: |-
