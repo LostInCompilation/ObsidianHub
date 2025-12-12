@@ -1,0 +1,2707 @@
+###############################################################
+#                                                             #
+#                         ObsidianHub                         #
+#                                                             #
+# (C)2025 Marc Schöndorf                                      #
+#                                                             #
+# Smart home dashboard with environmental sensors,            #
+# OLED display, RGB LEDs and rotary encoder.                  #
+#                                                             #
+###############################################################
+
+# Test: Factory reset
+
+# LED status led showing wifi status and setup mode (make script show wifi setup page)
+# Weather station dashboard
+# If setup wifi pages pops up while already in menu / menu detail page, it return to dashboard, not last viewed page
+# Fix 'light.wled_main': Can't convert 'None' to number!
+# - Brightness sync on boot fix
+# - Graph range and grid
+# - Graph show min max values
+
+###############################################################
+# Substitutions
+###############################################################
+substitutions:
+  version: "1.2.0"
+  num_dashboard_pages: 3
+
+###############################################################
+# Device Configuration
+###############################################################
+esphome:
+  name: obsidianhub
+  friendly_name: ObsidianHub
+  comment: "SmartHome Dashboard with multiple environmental sensors"
+  name_add_mac_suffix: true
+  project:
+    name: "Marc.ObsidianHub"
+    version: "${version}"
+  platformio_options:
+    board_build.f_flash: 80000000L
+    board_build.flash_mode: qio
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: restore_led_states_from_flash
+      - script.execute: update_graph_durations  # Initialize graph durations
+
+esp32:
+  variant: ESP32C3
+  board: esp32-c3-devkitm-1
+  cpu_frequency: 160MHz
+  framework:
+    type: esp-idf
+    advanced:
+      loop_task_stack_size: 16384
+
+###############################################################
+# Flash Memory Protection
+# Reduces wear by batching writes every 2 minutes
+###############################################################
+preferences:
+  flash_write_interval: 5min
+
+###############################################################
+# Logging
+###############################################################
+logger:
+  level: INFO
+
+debug:
+  update_interval: 60s
+
+###############################################################
+# Home Assistant Integration
+# NOTE: Uncomment reboot_timeout if using MQTT exclusively.
+# Otherwise automatic reboots will occur if no API connection
+# could be established within 15min.
+###############################################################
+api:
+  id: api_component
+  encryption:
+    key: "h5PmbvHuELjG+4JcpXIM0FtZipehBWZpxHOrtCI8yFk="
+
+  #reboot_timeout: 0s     # <-- Uncomment this if using MQTT exclusively
+
+  on_client_connected:
+    - delay: 500ms
+    - lambda: |-
+        ESP_LOGI("brightness", "HA connected — performing brightness sync");
+
+        id(brightness_sync_boot).call();
+
+        if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
+        {
+          ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
+          return;
+        }
+
+        float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
+        uint32_t pct = clamp((int)lround(tmp), 0, 100);
+
+        ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
+
+        id(brightness_control).publish_state(pct);
+
+###############################################################
+# Over-The-Air Firmware Updates
+###############################################################
+ota:
+  - platform: esphome
+    id: ota_component
+    password: "59453e2da0582eac101ed3054f43fc81"
+    #password: "ObsidianHubOTA2025"
+
+    on_begin:
+      then:
+        - lambda: |-
+            id(ota_progress) = 0.0f;
+            id(main_display).show_page(id(page_is_ota_updating));
+            id(wake_display_and_reset_timer).execute();
+    on_progress:
+      then:
+        - lambda: |-
+            id(ota_progress) = x;
+            id(main_display).update();
+    on_end:
+      then:
+        - lambda: |-
+            id(ota_progress) = 100.0f;
+            id(main_display).update();
+    on_error:
+      then:
+        - lambda: |-
+            id(ota_progress) = -1.0f;
+            id(main_display).update();
+
+###############################################################
+# WiFi Configuration
+###############################################################
+wifi:
+  #ssid: !secret wifi_ssid
+  #password: !secret wifi_password
+  #fast_connect: true
+  #power_save_mode: none
+  enable_btm: true
+  enable_rrm: true
+  id: wifi_component
+
+  on_connect:
+    - lambda: |-
+        if (!id(wifi_has_been_setup_by_user) || id(main_display).get_active_page() == id(page_wifi_ap_mode))
+          id(main_display).show_page(id(page_main_dashboard));
+
+        id(wifi_has_been_setup_by_user) = true;
+  on_disconnect:
+    - lambda: |-
+        id(wake_display_and_reset_timer).execute();
+
+  # Fallback access point for initial setup or connection failures
+  ap:
+    ssid: "ObsidianHub-AP"
+    password: "ObsidianHub2025"
+    #ap_timeout: 60s
+
+captive_portal:
+
+###############################################################
+# MQTT Configuration (Optional)
+# Uncomment to enable MQTT alongside or instead of Home Assistant API
+###############################################################
+mqtt:
+  broker: 192.168.0.103
+  port: 1883
+  #username: !secret mqtt_user
+  #password: !secret mqtt_password
+  username: "mqtt-user"
+  password: "mqtt-user"
+  log_topic: null
+  keepalive: 8s
+  publish_nan_as_none: true
+  id: mqtt_component
+  client_id: obsidianhub
+  reboot_timeout: 0s
+  idf_send_async: true
+
+  discovery: false    # HA automatic entity discovery
+  discover_ip: false  # HA automatic device discovery
+
+###############################################################
+# Time Synchronization
+# Syncs time from NTP pool servers
+###############################################################
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: Europe/Berlin
+    servers:
+     - 0.pool.ntp.org
+     - 1.pool.ntp.org
+     - 2.pool.ntp.org
+
+###############################################################
+# Web Server (Optional)
+# Uncomment to enable web-based configuration interface
+###############################################################
+#web_server:
+#  version: 3
+#  port: 80
+#  auth:
+#    username: ObsidianHub
+#    password: ObsidianHub
+
+###############################################################
+# I2C Bus Configuration
+# Connected sensors: AHT20 (temp/humidity), BMP280 (pressure), BH1750 (light)
+###############################################################
+i2c:
+  sda: GPIO9
+  scl: GPIO8
+  scan: false
+  frequency: 400kHz
+  timeout: 1ms
+
+###############################################################
+# SPI Bus Configuration
+# Connected sensor: ENS160 (air quality)
+###############################################################
+spi:
+  clk_pin: GPIO4
+  mosi_pin: GPIO0
+  miso_pin: GPIO1
+
+###############################################################
+# Global Variables
+###############################################################
+globals:
+  # --- OTA Progress ---
+  - id: ota_progress
+    type: float
+    restore_value: no
+    initial_value: "0.0f"
+
+  # --- Boot Animation Control ---
+  - id: wifi_has_been_setup_by_user
+    type: bool
+    restore_value: yes
+    initial_value: "false"
+
+  # --- Boot Animation Control ---
+  - id: is_boot_complete
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # --- Display Brightness ---
+  - id: display_brightness
+    type: float
+    restore_value: yes
+    initial_value: "0.0f"
+
+  # --- Render spinners ---
+  - id: show_time_sync_spinner
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: ens160_sensor_ready
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # --- Sleep/Wake Management ---
+  - id: sleep_timeout_milliseconds
+    type: uint32_t
+    restore_value: yes
+    initial_value: "20000"
+
+  - id: is_display_sleeping
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: last_interaction_time_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: is_fade_out_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: ignore_next_encoder_button_press_after_wake_up
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # --- Graph Configuration ---
+  - id: graph_duration_minutes
+    type: uint32_t
+    restore_value: yes
+    initial_value: "120"  # Default: 120 minutes
+
+  # --- Page Navigation ---
+  - id: current_dashboard_page
+    type: int
+    restore_value: no
+    initial_value: "0"  # 0 = Main dashboard, 1 = Air quality dashboard, 2 = System Monitor
+
+  - id: last_saved_page
+    type: esphome::display::DisplayPage*
+    restore_value: no
+    initial_value: "nullptr"
+
+  - id: is_menu_visible
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: is_menu_detail_visible
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  # --- PC Monitor Connection Tracking ---
+  - id: system_monitor_mqtt_last_update
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  # --- LED State Persistence (survives reboot) ---
+  # Format: [brightness, red, green, blue, is_on] for each LED
+  - id: saved_status_led_state
+    type: float[5]
+    restore_value: yes
+    initial_value: '{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}'
+
+  - id: saved_key1_led_state
+    type: float[5]
+    restore_value: yes
+    initial_value: '{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}'
+
+  - id: saved_key2_led_state
+    type: float[5]
+    restore_value: yes
+    initial_value: '{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}'
+
+###############################################################
+# Fonts
+###############################################################
+font:
+  # --- Digital Clock Display ---
+  - file: "fonts/advanced_dot_digital.ttf"
+    id: font_clock_large
+    size: 20
+    glyphs: "0123456789:"
+
+  # --- Air Quality Dashboard ---
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_ui_aqi_number
+    size: 33
+    glyphs: "12345"
+
+  - file:
+      type: gfonts
+      family: IBM Plex Sans
+      weight: 700
+    id: font_ui_aqi_text_big
+    size: 20
+    glyphs: "GODPR-"
+
+  - file:
+      type: gfonts
+      family: IBM Plex Sans
+      weight: 700
+    id: font_ui_aqi_text_small
+    size: 12
+    glyphs: "EXCLNTMODRAUHY"
+
+  - file: "fonts/bdf/9x15.bdf"
+    id: font_eco2_tvoc_values
+    glyphs: "0123456789pmb"
+
+  # --- Diverse Elements ---
+  - file: "fonts/bdf/7x13.bdf"
+    id: font7x13
+  - file: "fonts/bdf/7x13B.bdf"
+    id: font7x13B
+
+  - file: "fonts/bdf/6x12.bdf"
+    id: font6x12
+
+  # --- For Small Copyright Text ---
+  - file: "fonts/bdf/5x8.bdf"
+    id: font5x8
+    glyphs: "(C)205 MarcShoendf"
+
+  # --- Headers ---
+  - file:
+      type: gfonts
+      family: IBM Plex Sans
+      weight: 550
+    id: font_ui_18_bold
+    size: 18
+
+  # --- Sub-Header, Menu, Temp & Humid Values ---
+  - file:
+      type: gfonts
+      family: IBM Plex Sans
+      weight: 650
+    id: font_ui_15_bold
+    size: 15
+
+  # --------------------------------------------------------------
+
+  # TODO clean up fonts
+
+  # --- IBM Plex Sans (UI Text) ---
+  - file:
+      type: gfonts
+      #family: IBM Plex Sans
+      family: Roboto
+      weight: 600
+    id: font_ui_21_bold
+    size: 21
+
+  # --- Roboto Bold (Large Numbers) ---
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 800
+    id: font_number_large
+    size: 37
+
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 700
+    id: font_number_medium
+    size: 16
+
+###############################################################
+# Images and Icons
+###############################################################
+image:
+  # --- Main Dashboard Icons ---
+  - file: mdi:thermometer
+    id: icon_temperature
+    resize: 24x24
+    type: binary
+
+  - file: mdi:water-percent
+    id: icon_humidity
+    resize: 24x24
+    type: binary
+
+  # --- Air Qualiy Dashboard Icons ---
+  - file: mdi:leaf
+    id: icon_leaf
+    resize: 31x31
+    type: binary
+
+  - file: mdi:molecule-co2
+    id: icon_co2
+    resize: 34x28
+    type: binary
+
+  - file: "img/cloud_icon.png"
+    id: icon_cloud
+    type: binary
+    invert_alpha: false
+    resize: 58x11
+
+  - file: "img/tvoc_icon.png"
+    id: icon_tvoc
+    type: binary
+    invert_alpha: false
+
+  # --- System Monitor Icons ---
+  - file: mdi:web
+    id: icon_web
+    resize: 19x19
+    type: binary
+
+  - file: mdi:harddisk
+    id: icon_hdd
+    resize: 19x19
+    type: binary
+
+  # --- Menu Icons ---
+  - file: mdi:cog
+    id: icon_gear
+    resize: 22x22
+    type: binary
+
+  - file: "img/wifi.png"
+    id: icon_wifi
+    resize: 20x18
+    invert_alpha: true
+    type: binary
+
+  # --- No WiFi Icon ---
+  - file: mdi:wifi-off
+    id: icon_wifi_off
+    resize: 32x32
+    type: binary
+
+  # --- Reboot confirmation page icon ---
+  - file: "img/info.png"
+    id: icon_info_big
+    type: binary
+    invert_alpha: false
+
+###############################################################
+# Animations
+###############################################################
+animation:
+  - file: "img/boot_animation.gif"
+    id: animation_boot
+    type: binary
+    invert_alpha: false
+
+  - file: "img/spinner1.gif"
+    id: animation_spinner1
+    type: binary
+    invert_alpha: true
+    resize: 35x35
+
+  - file: "img/spinner2.gif"
+    id: animation_spinner2
+    type: binary
+    invert_alpha: false
+    resize: 35x35
+
+###############################################################
+# QR Code
+###############################################################
+qr_code:
+  - id: wifi_ap_qr_code
+    value: "WIFI:T:WPA;S:ObsidianHub-AP;P:ObsidianHub2025;H:false;;"
+    ecc: MEDIUM
+
+###############################################################
+# Scripts
+###############################################################
+script:
+  # Wake display and LEDs from sleep, reset inactivity timer
+  - id: wake_display_and_reset_timer
+    then:
+      - lambda: |-
+          id(last_interaction_time_ms) = millis();
+
+          // Only wake if currently sleeping or fading out
+          if (!id(is_display_sleeping) && !id(is_fade_out_active))
+            return;
+
+          // Restore LEDs from flash memory
+          id(restore_led_states_from_flash).execute();
+
+          // Resume display updates and restore full brightness
+          id(main_display).start_poller();
+          id(main_display).update();
+          id(main_display).set_contrast(id(display_brightness));
+
+          id(is_display_sleeping) = false;
+          id(is_fade_out_active) = false;
+
+  # Show menu on long press of rotary encoder (wait 600ms and read button again)
+  - id: check_for_long_press
+    then:
+      - delay: 600ms
+      - lambda: |-
+          // Open menu if long pressed
+          if (id(button_encoder).state && !id(is_menu_visible) && !id(is_menu_detail_visible))
+          {
+            id(return_to_last_saved_page_with_delay).stop();
+            id(is_menu_visible) = true;
+            id(main_display).show_page(id(page_menu));
+          }
+
+  # Return to active dashboard page immediately
+  - id: return_to_current_dashboard
+    then:
+      - lambda: |-
+          if (id(current_dashboard_page) == 0)
+            id(main_display).show_page(id(page_main_dashboard));
+          else if (id(current_dashboard_page) == 1)
+            id(main_display).show_page(id(page_air_quality));
+          else if (id(current_dashboard_page) == 2)
+            id(main_display).show_page(id(page_system_monitor));
+
+  # Return to last saved page (global variable) after delay.
+  # Used for switching back from brightness page
+  - id: return_to_last_saved_page_with_delay
+    then:
+      - delay: 3s
+      - lambda: |-
+          if (id(last_saved_page) != nullptr)
+            id(main_display).show_page(id(last_saved_page));
+
+          id(wake_display_and_reset_timer).execute();
+
+  # Update all graph durations and grid spacing
+  - id: update_graph_durations
+    then:
+      - lambda: |-
+          const uint32_t duration_seconds = id(graph_duration_minutes) * 60;
+          uint32_t grid_spacing_sec = 0;
+
+          if (id(graph_duration_minutes) <= 5)
+            grid_spacing_sec = 60;
+          else if (id(graph_duration_minutes) <= 10)
+            grid_spacing_sec = 120;
+          else if (id(graph_duration_minutes) <= 50)
+            grid_spacing_sec = 600;
+          else if (id(graph_duration_minutes) <= 300)
+            grid_spacing_sec = 3600;
+          else if (id(graph_duration_minutes) <= 720)
+            grid_spacing_sec = 7200;
+          else
+            grid_spacing_sec = 14400;
+
+          // Update all graphs
+          id(graph_temp).set_duration(duration_seconds);
+          id(graph_temp).set_grid_x(grid_spacing_sec);
+          id(graph_temp).reset_to_construction_state();
+          id(graph_temp).setup();
+
+          id(graph_humid).set_duration(duration_seconds);
+          id(graph_humid).set_grid_x(grid_spacing_sec);
+          id(graph_humid).reset_to_construction_state();
+          id(graph_humid).setup();
+
+          id(graph_aqi).set_duration(duration_seconds);
+          id(graph_aqi).set_grid_x(grid_spacing_sec);
+          id(graph_aqi).reset_to_construction_state();
+          id(graph_aqi).setup();
+
+          id(graph_eco2).set_duration(duration_seconds);
+          id(graph_eco2).set_grid_x(grid_spacing_sec);
+          id(graph_eco2).reset_to_construction_state();
+          id(graph_eco2).setup();
+
+          id(graph_tvoc).set_duration(duration_seconds);
+          id(graph_tvoc).set_grid_x(grid_spacing_sec);
+          id(graph_tvoc).reset_to_construction_state();
+          id(graph_tvoc).setup();
+
+  # Restore LED states from flash memory
+  - id: restore_led_states_from_flash
+    then:
+      - lambda: |-
+          // Restore Status LED
+          if (id(saved_status_led_state)[4] != 0.0f)
+          {
+            auto call = id(led_status).turn_on();
+            call.set_rgb(
+                id(saved_status_led_state)[1],
+                id(saved_status_led_state)[2],
+                id(saved_status_led_state)[3]
+            );
+            call.set_brightness(id(saved_status_led_state)[0]);
+            call.perform();
+          }
+
+          // Restore Key 1 LED
+          if (id(saved_key1_led_state)[4] != 0.0f)
+          {
+            auto call = id(led_key1).turn_on();
+            call.set_rgb(
+                id(saved_key1_led_state)[1],
+                id(saved_key1_led_state)[2],
+                id(saved_key1_led_state)[3]
+            );
+            call.set_brightness(id(saved_key1_led_state)[0]);
+            call.perform();
+          }
+
+          // Restore Key 2 LED
+          if (id(saved_key2_led_state)[4] != 0.0f)
+          {
+            auto call = id(led_key2).turn_on();
+            call.set_rgb(
+                id(saved_key2_led_state)[1],
+                id(saved_key2_led_state)[2],
+                id(saved_key2_led_state)[3]
+            );
+            call.set_brightness(id(saved_key2_led_state)[0]);
+            call.perform();
+          }
+
+###############################################################
+# Intervals (Periodic Tasks)
+###############################################################
+interval:
+  # Update boot animation frames
+  - interval: 12ms
+    then:
+      - if:
+          condition:
+            lambda: "return !id(is_boot_complete);"
+          then:
+            - animation.next_frame: animation_boot
+
+  # Update spinner1 animation frames (time syncing)
+  - interval: 12ms
+    startup_delay: 3s
+    then:
+      - if:
+          condition:
+            lambda: "return id(is_boot_complete) && id(show_time_sync_spinner);"
+          then:
+            - animation.next_frame: animation_spinner1
+
+  # Update spinner2 animation frames (wait for ENS160 sensor)
+  - interval: 12ms
+    startup_delay: 3s
+    then:
+      - if:
+          condition:
+            lambda: "return id(is_boot_complete) && !id(ens160_sensor_ready);"
+          then:
+            - animation.next_frame: animation_spinner2
+
+  # Save current LED states to flash
+  - interval: 500ms
+    startup_delay: 6s
+    then:
+      - lambda: |-
+          // Don't save when updating
+          if (id(main_display).get_active_page() == id(page_is_ota_updating))
+            return;
+
+          // Save Status LED state
+          auto current = id(led_status).current_values;
+          id(saved_status_led_state)[0] = current.get_brightness();
+          id(saved_status_led_state)[1] = current.get_red();
+          id(saved_status_led_state)[2] = current.get_green();
+          id(saved_status_led_state)[3] = current.get_blue();
+
+          // Save Key 1 LED state
+          current = id(led_key1).current_values;
+          id(saved_key1_led_state)[0] = current.get_brightness();
+          id(saved_key1_led_state)[1] = current.get_red();
+          id(saved_key1_led_state)[2] = current.get_green();
+          id(saved_key1_led_state)[3] = current.get_blue();
+
+          // Save Key 2 LED state
+          current = id(led_key2).current_values;
+          id(saved_key2_led_state)[0] = current.get_brightness();
+          id(saved_key2_led_state)[1] = current.get_red();
+          id(saved_key2_led_state)[2] = current.get_green();
+          id(saved_key2_led_state)[3] = current.get_blue();
+
+          // Save is_on() only when not sleeping
+          if (!id(is_fade_out_active) && !id(is_display_sleeping))
+          {
+            id(saved_status_led_state)[4] = id(led_status).current_values.is_on() ? 1.0f : 0.0f;
+            id(saved_key1_led_state)[4] = id(led_key1).current_values.is_on() ? 1.0f : 0.0f;
+            id(saved_key2_led_state)[4] = id(led_key2).current_values.is_on() ? 1.0f : 0.0f;
+          }
+
+
+  # Handle WiFi AP mode detection
+  # Show WiFi setup page if we loose WiFi connection for at least 1min
+  - interval: 10s
+    then:
+      - lambda: |-
+          static uint32_t ap_mode_timer = 0;
+
+          // Check if we are in WiFi AP mode
+          if (!id(wifi_component).is_connected() && id(is_boot_complete))
+          {
+            ap_mode_timer++;
+
+            // Trigger after 60s of no wifi connection
+            if (ap_mode_timer > 6)
+            {
+              id(wake_display_and_reset_timer).execute();
+
+              // Show AP page and do nothing
+              id(main_display).show_page(id(page_wifi_ap_mode));
+              id(is_menu_detail_visible) = false;
+              id(is_menu_visible) = false;
+
+              auto call = id(led_status).make_call();
+              call.set_state(true);
+              call.set_effect("Rainbow");
+              call.perform();
+            }
+          }
+          else
+          {
+            ap_mode_timer = 0;
+          }
+
+  # Handle boot animation and auto-sleep
+  - interval: 50ms
+    then:
+      - lambda: |-
+          // Constants for smooth visual fading
+          static const uint32_t BOOT_LOGO_HOLD_MS = 4400;
+          static const uint32_t FADE_DURATION_MS = 700;
+          static const float GAMMA = 2.4f;  // Human eye perception correction
+          static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
+
+          const uint32_t now = millis();
+
+          // ============================================
+          // BOOT SEQUENCE: Fade in logo -> hold -> show dashboard
+          // ============================================
+          if (!id(is_boot_complete))
+          {
+              static uint32_t fade_start = 0;
+              static uint32_t hold_start = 0;
+              static bool fade_done = false;
+
+              if (fade_start == 0)
+                fade_start = now;
+
+              // Fade in phase
+              if (!fade_done)
+              {
+                  const uint32_t elapsed = now - fade_start;
+                  const float progress = elapsed * INV_FADE_DURATION;
+                  const float correctedValue = pow(progress, GAMMA);
+
+                  if (elapsed < FADE_DURATION_MS && correctedValue <= id(display_brightness))
+                  {
+                      id(main_display).set_contrast(correctedValue);
+                  }
+                  else
+                  {
+                      fade_done = true;
+                      hold_start = now;
+                      id(main_display).set_contrast(id(display_brightness));
+                  }
+              }
+              else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase
+              {
+                  // Initialize
+                  id(config_display_brightness).publish_state((int)(id(display_brightness) * 100.0f));
+                  id(config_auto_sleep).publish_state(id(sleep_timeout_milliseconds) / 1000);
+
+                  id(is_boot_complete) = true;
+                  id(last_interaction_time_ms) = now;
+
+                  // Show dashboard or WiFi setup page if not set up by user already
+                  if (id(wifi_has_been_setup_by_user))
+                    id(main_display).show_page(id(page_main_dashboard));
+                  else
+                    id(main_display).show_page(id(page_wifi_ap_mode));
+              }
+          }
+          // ============================================
+          // AUTO-SLEEP: Fade out after inactivity timeout
+          // ============================================
+          else if (id(sleep_timeout_milliseconds) > 0
+                  && !id(is_display_sleeping)
+                  && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
+                  && id(main_display).get_active_page() != id(page_is_restarting)
+                  && id(main_display).get_active_page() != id(page_wifi_ap_mode)
+                  && id(main_display).get_active_page() != id(page_is_ota_updating))
+          {
+              static uint32_t fade_start = 0;
+              uint32_t idle_time = now - id(last_interaction_time_ms);
+
+              // Check if any button is currently still being held down
+              const bool any_button_held = id(button_encoder).state ||
+                                        id(button_left).state ||
+                                        id(button_right).state;
+
+              // If button is held, reset the timer to prevent sleep
+              if (any_button_held)
+              {
+                  id(last_interaction_time_ms) = now;
+                  idle_time = 0;
+
+                  // Cancel any ongoing fade out
+                  if (id(is_fade_out_active))
+                  {
+                      id(is_fade_out_active) = false;
+                      id(main_display).set_contrast(id(display_brightness));
+                  }
+              }
+
+              // Start fade out when timeout reached
+              if (idle_time >= id(sleep_timeout_milliseconds) && !id(is_fade_out_active))
+              {
+                  id(is_fade_out_active) = true;
+                  fade_start = now;
+              }
+
+              // Perform fade out
+              if (id(is_fade_out_active))
+              {
+                  const uint32_t elapsed = now - fade_start;
+                  const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
+
+                  if (elapsed < FADE_DURATION_MS && progress >= 0.0f)
+                  {
+                      float gamma_corrected = pow(progress, GAMMA) * id(display_brightness);
+                      id(main_display).set_contrast(gamma_corrected);
+                  }
+                  else
+                  {
+                      // Enter sleep mode
+                      id(main_display).set_contrast(0.0f);
+                      id(is_display_sleeping) = true;
+                      id(is_fade_out_active) = false;
+                      id(main_display).stop_poller();
+
+                      // Turn off LEDs if enabled
+                      if (id(switch_led_auto_sleep).state)
+                      {
+                          id(led_status).turn_off().perform();
+                          id(led_key1).turn_off().perform();
+                          id(led_key2).turn_off().perform();
+                      }
+                  }
+              }
+          }
+
+###############################################################
+# OLED Display Configuration
+###############################################################
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    id: main_display
+    address: 0x3C
+    contrast: 0%  # Start at zero for boot fade-in
+    update_interval: 25ms
+
+    # Force immediate redraw when switching pages
+    on_page_change:
+      - component.update: main_display
+
+    pages:
+      # ============================================
+      # BOOT LOGO PAGE
+      # ============================================
+      - id: page_boot_logo
+        lambda: |-
+          it.image(20, -7, id(animation_boot));
+
+      # ============================================
+      # RESTARTING PAGE
+      # ============================================
+      - id: page_is_restarting
+        lambda: |-
+          it.printf(64, 32, id(font_ui_18_bold), TextAlign::CENTER, "Rebooting...");
+
+      # ============================================
+      # OTA UPDATING PAGE
+      # ============================================
+      - id: page_is_ota_updating
+        lambda: |-
+          it.printf(64, 2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Updating");
+
+          if (id(ota_progress) < 0)
+          {
+            // Error state
+            it.printf(64, 30, id(font_ui_15_bold), TextAlign::TOP_CENTER, "FAILED!");
+            return;
+          }
+
+          it.printf(64, 28, id(font_number_medium), TextAlign::TOP_CENTER,
+                    "%.0f%%", id(ota_progress));
+
+          // Progress bar
+          const int BAR_W = 100, BAR_H = 10, BAR_X = 14, BAR_Y = 50;
+          int fill_w = (int)((id(ota_progress) / 100.0f) * (BAR_W - 4));
+          it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
+          if (fill_w > 0)
+            it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
+
+      # ============================================
+      # WIFI AP PAGE
+      # ============================================
+      - id: page_wifi_ap_mode
+        lambda: |-
+          it.printf(30, 25, id(font_ui_15_bold), TextAlign::CENTER, "Setup");
+          it.printf(30, 39, id(font_ui_15_bold), TextAlign::CENTER, "WiFi");
+
+          // Draw the QR-code
+          it.qr_code(62, 0, id(wifi_ap_qr_code), COLOR_ON, 2);
+
+      # ============================================
+      # MAIN DASHBOARD: Clock, Temperature, Humidity
+      # ============================================
+      - id: page_main_dashboard
+        lambda: |-
+          static const uint32_t MIN_SPINNER_TIME_MS = 6000;
+          static const uint32_t MIN_NO_WIFI_TIME_MS = 1000;
+          static uint32_t spinner_start_time = millis();
+          static uint32_t wifi_lost_time = 0;
+
+          const uint32_t now = millis();
+          const bool wifi_connected = id(wifi_component).is_connected();
+
+          // Check WiFi disconnect
+          if (wifi_connected)
+            wifi_lost_time = 0;
+          else if (wifi_lost_time == 0)
+            wifi_lost_time = now;
+
+          const bool show_no_wifi = !wifi_connected && (now - wifi_lost_time >= MIN_NO_WIFI_TIME_MS);
+
+          if (show_no_wifi)
+          {
+            // Show "No WiFi"
+            it.image(5, 5, id(icon_wifi_off));
+            it.printf(45, 9, id(font_ui_21_bold), TextAlign::TOP_LEFT, "No WiFi");
+          }
+          else
+          {
+            // WiFi connected or in grace period - show spinner/clock
+            if (id(sntp_time).now().is_valid())
+            {
+              if (now - spinner_start_time >= MIN_SPINNER_TIME_MS)
+                id(show_time_sync_spinner) = false;
+            }
+            else
+            {
+              id(show_time_sync_spinner) = true;
+              spinner_start_time = now;
+            }
+
+            if (id(show_time_sync_spinner))
+            {
+              it.image(3, 1, id(animation_spinner1));
+              it.printf(46, 6, id(font_ui_18_bold), TextAlign::TOP_LEFT, "Syncing...");
+            }
+            else
+            {
+              it.strftime(65, 16, id(font_clock_large), TextAlign::TOP_CENTER,
+                          "%H:%M:%S", id(sntp_time).now());
+            }
+          }
+
+          // Temperature display
+          it.image(-2, 40, id(icon_temperature));
+          it.printf(19, 41, id(font_ui_15_bold), TextAlign::TOP_LEFT, "%.1f°C", id(sensor_temperature).state);
+
+          // Humidity display
+          it.image(70, 40, id(icon_humidity));
+          it.printf(92, 41, id(font_ui_15_bold), TextAlign::TOP_LEFT, "%.0f%%", id(sensor_humidity).state);
+
+      # ============================================
+      # AIR QUALITY DASHBOARD: AQI, CO2, TVOC
+      # ============================================
+      - id: page_air_quality
+        lambda: |-
+          // Check if sensor readings are valid (not NaN)
+          id(ens160_sensor_ready) = id(sensor_aqi).has_state() &&
+                             id(sensor_eco2).has_state() &&
+                             id(sensor_tvoc).has_state() &&
+                             !std::isnan(id(sensor_aqi).state) &&
+                             !std::isnan(id(sensor_eco2).state) &&
+                             !std::isnan(id(sensor_tvoc).state);
+
+          if (!id(ens160_sensor_ready))
+          {
+            unsigned long uptime_sec = millis() / 1000;
+            int minutes_remaining = 3 - (uptime_sec / 60);
+            if (minutes_remaining < 1)
+              minutes_remaining = 1;
+
+            // Show wait for sensor spinner
+            it.image(0, 8, id(animation_spinner2));
+            it.printf(40, 26, id(font_ui_18_bold), TextAlign::BOTTOM_LEFT, "Air Quality");
+            it.printf(46, 28, id(font7x13), TextAlign::TOP_LEFT, "Preparing...");
+
+            // Show remaining time at the bottom
+            it.printf(64, 63, id(font6x12), TextAlign::BOTTOM_CENTER, "%dmin remaining", minutes_remaining);
+
+            return;
+          }
+
+          // AQI
+          it.image(8, -2, id(icon_leaf));
+          it.printf(39, -5, id(font_ui_aqi_number), TextAlign::TOP_LEFT, "%d", (int)id(sensor_aqi).state);
+
+          const int test = 1;
+
+          switch ((int)id(sensor_aqi).state)
+          {
+            case 1:
+              it.printf(126, 14, id(font_ui_aqi_text_small), TextAlign::CENTER_RIGHT, "EXCELLENT");
+            break;
+
+            case 2:
+              it.printf(122, 14, id(font_ui_aqi_text_big), TextAlign::CENTER_RIGHT, "GOOD");
+            break;
+
+            case 3:
+              it.printf(126, 14, id(font_ui_aqi_text_small), TextAlign::CENTER_RIGHT, "MODERATE");
+            break;
+
+            case 4:
+              it.printf(122, 14, id(font_ui_aqi_text_big), TextAlign::CENTER_RIGHT, "POOR");
+            break;
+
+            case 5:
+              it.printf(126, 14, id(font_ui_aqi_text_small), TextAlign::CENTER_RIGHT, "UNHEALTHY");
+            break;
+
+            default:
+              it.printf(105, 14, id(font_ui_aqi_text_big), TextAlign::CENTER_RIGHT, "---");
+            break;
+          }
+
+          // ***********************************
+          // CO2
+          it.image(24, 27, id(icon_co2));
+          it.image(7, 36, id(icon_cloud));
+
+          // Get the width of the value text
+          int value_x = 19;
+          std::string value_str = str_sprintf("%d", (int)id(sensor_eco2).state);
+          int x1, y1, value_width, value_height;
+          it.get_text_bounds(value_x, 65, value_str.c_str(), id(font_eco2_tvoc_values),
+                            TextAlign::BOTTOM_CENTER, &x1, &y1, &value_width, &value_height);
+
+          int unit_x = value_x + (value_width / 2) + 3;
+          it.printf(value_x, 65, id(font_eco2_tvoc_values), TextAlign::BOTTOM_CENTER, "%d", (int)id(sensor_eco2).state);
+          it.print(unit_x, 63, id(font6x12), TextAlign::BOTTOM_LEFT, "ppm");
+
+          // ***********************************
+          // TVOC
+          it.image(66, 35, id(icon_tvoc));
+
+          // Get the width of the value text
+          value_x = 88;
+          value_str = str_sprintf("%d", (int)id(sensor_tvoc).state);
+          it.get_text_bounds(value_x, 65, value_str.c_str(), id(font_eco2_tvoc_values),
+                            TextAlign::BOTTOM_CENTER, &x1, &y1, &value_width, &value_height);
+
+          unit_x = value_x + (value_width / 2) + 3;
+          it.printf(value_x, 65, id(font_eco2_tvoc_values), TextAlign::BOTTOM_CENTER, "%d", (int)id(sensor_tvoc).state);
+          it.print(unit_x, 63, id(font6x12), TextAlign::BOTTOM_LEFT, "ppb");
+
+      # ============================================
+      # SYSTEM MONITOR DASHBOARD
+      # ============================================
+      - id: page_system_monitor
+        lambda: |-
+          const bool is_connected = (millis() - id(system_monitor_mqtt_last_update)) < 8000;
+
+          if (!id(mqtt_cpu_percent).has_state() || !is_connected)
+          {
+            it.printf(64, 4, id(font_ui_18_bold), TextAlign::TOP_CENTER, "SYSTEM STATS");
+            it.printf(64, 32, id(font_ui_15_bold), TextAlign::TOP_CENTER, "No Data");
+            return;
+          }
+
+          // Static variables persist between lambda calls
+          static float smooth_cpu = 0.0f;
+          static float smooth_ram = 0.0f;
+
+          // Smoothing factor
+          const float SMOOTHING = 0.08f;
+
+          // Smooth CPU percentage
+          float target_cpu = id(mqtt_cpu_percent).state;
+          smooth_cpu += (target_cpu - smooth_cpu) * SMOOTHING;
+
+          // Smooth RAM percentage
+          float target_ram = id(mqtt_ram_percent).state;
+          smooth_ram += (target_ram - smooth_ram) * SMOOTHING;
+
+          // CPU text (show actual value)
+          it.printf(1, -1, id(font7x13B), TextAlign::TOP_LEFT, "CPU");
+          it.printf(128, -1, id(font7x13), TextAlign::TOP_RIGHT, "%d%%", lround(target_cpu));
+
+          // RAM text (show actual value)
+          it.printf(1, 12, id(font7x13B), TextAlign::TOP_LEFT, "RAM");
+          it.printf(128, 12, id(font7x13), TextAlign::TOP_RIGHT, "%d%%", lround(target_ram));
+
+          // Disk
+          it.image(5, 25, id(icon_hdd));
+          it.printf(39, 24, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Disk");
+          it.printf(31, 43, id(font6x12), TextAlign::TOP_CENTER, "W %.1fMB", id(mqtt_disk_write).state);
+          it.printf(31, 53, id(font6x12), TextAlign::TOP_CENTER, "R %.1fMB", id(mqtt_disk_read).state);
+
+          // Network
+          it.image(75, 25, id(icon_web));
+          it.printf(96, 24, id(font_ui_15_bold), TextAlign::TOP_LEFT, "Net");
+          it.printf(79, 43, id(font6x12), TextAlign::TOP_LEFT, "U %.1fMb", id(mqtt_net_sent).state * 8.0f);
+          it.printf(79, 53, id(font6x12), TextAlign::TOP_LEFT, "D %.1fMb", id(mqtt_net_recv).state * 8.0f);
+
+          // CPU progress bar (using smoothed value)
+          int BAR_W = 75;
+          int BAR_H = 9;
+          int BAR_X = 26;
+          int BAR_Y = 1;
+          int fill_w = (int)( (smooth_cpu / 100.0f) * (BAR_W - 4) );
+          it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
+          if (fill_w > 0)
+            it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
+
+          // RAM progress bar (using smoothed value)
+          BAR_Y = 14;
+          fill_w = (int)( (smooth_ram / 100.0f) * (BAR_W - 4) );
+          it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
+          if (fill_w > 0)
+            it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
+
+      # ============================================
+      # BRIGHTNESS CONTROL: Shows percentage with progress bar
+      # ============================================
+      - id: page_brightness_control
+        lambda: |-
+          // Header
+          //it.printf(64, 1, id(font_ui_15_bold), TextAlign::TOP_CENTER, "BRIGHTNESS");
+          it.printf(64, 1, id(font7x13B), TextAlign::TOP_CENTER, "BRIGHTNESS");
+
+          // Large percentage value
+          it.printf(64, 11, id(font_number_large), TextAlign::TOP_CENTER, "%.0f%%", id(brightness_control).state);
+
+          // Progress bar
+          const int BAR_W = 100, BAR_H = 10, BAR_X = 14, BAR_Y = 54;
+          it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
+
+          int fill_w = (int)((id(brightness_control).state / 100.0f) * (BAR_W - 4));
+          if (fill_w > 0)
+            it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
+
+      # ============================================
+      # MENU
+      # ============================================
+      - id: page_menu
+        lambda: |-
+          it.menu(0, 0, id(main_menu), 128, 64);
+
+      # ============================================
+      # HISTORY GRAPHS
+      # ============================================
+      # Temperature
+      - id: page_menu_history_temp
+        lambda: |-
+          it.graph(0, 0, id(graph_temp));
+
+          const int32_t minutes = id(graph_duration_minutes);
+          if (minutes < 60)
+          {
+            it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dmin", minutes);
+          }
+          else
+          {
+            const int32_t hours = minutes / 60;
+            const int32_t remaining_mins = minutes % 60;
+
+            if (remaining_mins == 0)
+              it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh", hours);
+            else
+              it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh %dm", hours, remaining_mins);
+          }
+
+          it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "Temp: %.1f°C", id(sensor_temperature).state);
+
+      # Humidity
+      - id: page_menu_history_humid
+        lambda: |-
+          it.graph(0, 0, id(graph_humid));
+
+          const int32_t minutes = id(graph_duration_minutes);
+          if (minutes < 60)
+          {
+            it.printf(1, 66, id(font6x12), TextAlign::BOTTOM_LEFT, "%dmin", minutes);
+          }
+          else
+          {
+            const int32_t hours = minutes / 60;
+            const int32_t remaining_mins = minutes % 60;
+
+            if (remaining_mins == 0)
+              it.printf(1, 66, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh", hours);
+            else
+              it.printf(1, 66, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh %dm", hours, remaining_mins);
+          }
+
+          it.printf(127, 66, id(font6x12), TextAlign::BOTTOM_RIGHT, "Humid: %.1f%%", id(sensor_humidity).state);
+
+      # Air Quality
+      - id: page_menu_history_aqi
+        lambda: |-
+          it.graph(0, 0, id(graph_aqi));
+
+          const int32_t minutes = id(graph_duration_minutes);
+          if (minutes < 60)
+          {
+            it.printf(1, 65, id(font6x12), TextAlign::BOTTOM_LEFT, "%dmin", minutes);
+          }
+          else
+          {
+            const int32_t hours = minutes / 60;
+            const int32_t remaining_mins = minutes % 60;
+
+            if (remaining_mins == 0)
+              it.printf(1, 65, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh", hours);
+            else
+              it.printf(1, 65, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh %dm", hours, remaining_mins);
+          }
+
+          if (id(sensor_aqi).has_state())
+            it.printf(127, 65, id(font6x12), TextAlign::BOTTOM_RIGHT, "AQI: %d", (int)id(sensor_aqi).state);
+          else
+            it.printf(122, 65, id(font6x12), TextAlign::BOTTOM_RIGHT, "AQI: ---");
+
+      # eCO2
+      - id: page_menu_history_eco2
+        lambda: |-
+          it.graph(0, 0, id(graph_eco2));
+
+          const int32_t minutes = id(graph_duration_minutes);
+          if (minutes < 60)
+          {
+            it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dmin", minutes);
+          }
+          else
+          {
+            const int32_t hours = minutes / 60;
+            const int32_t remaining_mins = minutes % 60;
+
+            if (remaining_mins == 0)
+              it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh", hours);
+            else
+              it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh %dm", hours, remaining_mins);
+          }
+
+          if (id(sensor_eco2).has_state())
+            it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "eCO2: %dppm", (int)id(sensor_eco2).state);
+          else
+            it.printf(122, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "eCO2: ---");
+
+
+      # TVOC
+      - id: page_menu_history_tvoc
+        lambda: |-
+          it.graph(0, 0, id(graph_tvoc));
+
+          const int32_t minutes = id(graph_duration_minutes);
+          if (minutes < 60)
+          {
+            it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dmin", minutes);
+          }
+          else
+          {
+            const int32_t hours = minutes / 60;
+            const int32_t remaining_mins = minutes % 60;
+
+            if (remaining_mins == 0)
+              it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh", hours);
+            else
+              it.printf(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "%dh %dm", hours, remaining_mins);
+          }
+
+          if (id(sensor_tvoc).has_state())
+            it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "TVOC: %dppb", (int)id(sensor_tvoc).state);
+          else
+            it.printf(122, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "TVOC: ---");
+
+      # ============================================
+      # MENU DETAIL: Sleep Time
+      # ============================================
+      - id: page_menu_sleep_config
+        lambda: |-
+          // Header
+          it.printf(64, -4, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Sleep Time");
+
+          // Display value
+          const int32_t seconds = id(sleep_timeout_milliseconds) / 1000;
+          if (seconds == 0)
+          {
+            it.printf(64, 27, id(font_number_medium), TextAlign::TOP_CENTER, "DISABLED");
+          }
+          else if (seconds < 60)
+          {
+            it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%ds", seconds);
+          }
+          else
+          {
+            const int32_t minutes = seconds / 60;
+            if (minutes >= 60)
+            {
+              const int32_t hours = minutes / 60;
+              const int32_t remaining_mins = minutes % 60;
+
+              if (remaining_mins == 0)
+                it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%dh", hours);
+              else
+                it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%dh %dm", hours, remaining_mins);
+            }
+            else
+            {
+              it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%dm", minutes);
+            }
+          }
+
+          // ——— Visual step indicators (bottom row) ———
+          const int32_t TOTAL_DOTS  = (seconds >= 60 && seconds <= 600) ? 10 : 11;
+          const int32_t DOT_SPACING = 10;
+          const int32_t DOT_X_START = 64 - ( ((TOTAL_DOTS - 1) * DOT_SPACING) / 2 );
+          const int32_t DOT_Y       = 60;
+
+          for (int32_t i = 0; i < TOTAL_DOTS; i++)
+          {
+            int32_t x = DOT_X_START + i * DOT_SPACING;
+            bool active = false;
+
+            if (seconds < 60)
+            {
+              const int32_t cur = (seconds / 5) - 1;
+              if (cur == i)
+                active = true;
+            }
+            else if (seconds >= 60 && seconds <= 600)
+            {
+              const int32_t cur = (seconds / 60) - 1;
+              if (cur == i)
+                active = true;
+            }
+            else if (seconds > 600)
+            {
+              const int32_t cur = (seconds / 600) - 2;
+              if (cur == i)
+                active = true;
+            }
+
+            if (active)
+              it.filled_circle(x, DOT_Y, 3);
+            else
+              it.circle(x, DOT_Y, 3);
+          }
+
+      # ============================================
+      # MENU DETAIL: Graph Duration
+      # ============================================
+      - id: page_menu_graph_duration
+        lambda: |-
+          // Header
+          it.printf(64, -4, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Graph Duration");
+
+          // Display value
+          const int32_t minutes = id(graph_duration_minutes);
+          if (minutes < 60)
+          {
+            it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%dm", minutes);
+          }
+          else
+          {
+            const int32_t hours = minutes / 60;
+            const int32_t remaining_mins = minutes % 60;
+
+            if (remaining_mins == 0)
+              it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%dh", hours);
+            else
+              it.printf(64, 14, id(font_number_large), TextAlign::TOP_CENTER, "%dh %dm", hours, remaining_mins);
+          }
+
+          // ——— Visual step indicators (bottom row) ———
+          /*
+          1) 1-9min: 9 dots
+          2) 10-50min: 5 dots
+          3) 1-24h: 12 dots
+          */
+
+          int32_t TOTAL_DOTS;
+          if (minutes <= 9)
+            TOTAL_DOTS = 9;
+          else if (minutes > 9 && minutes <= 50)
+            TOTAL_DOTS = 5;
+          else if (minutes > 50)
+            TOTAL_DOTS = 12;
+
+          const int32_t DOT_SPACING = 10;
+          const int32_t DOT_X_START = 64 - ( ((TOTAL_DOTS - 1) * DOT_SPACING) / 2 );
+          const int32_t DOT_Y       = 60;
+
+          for (int32_t i = 0; i < TOTAL_DOTS; i++)
+          {
+            int32_t x = DOT_X_START + i * DOT_SPACING;
+            bool active = false;
+
+            if (minutes <= 9)
+            {
+              const int32_t cur = minutes - 1;
+              if (cur == i)
+                active = true;
+            }
+            else if (minutes > 9 && minutes <= 50)
+            {
+              const int32_t cur = (minutes / 10) - 1;
+              if (cur == i)
+                active = true;
+            }
+            else if (minutes > 50)
+            {
+              const int32_t cur = ((minutes + 60) / 120) - 1;
+              if (cur == i)
+                active = true;
+            }
+
+            if (active)
+              it.filled_circle(x, DOT_Y, 3);
+            else
+              it.circle(x, DOT_Y, 3);
+          }
+
+      # ============================================
+      # MENU DETAIL: Graph Duration Change Reboot Confirmation
+      # ============================================
+      - id: page_graph_duration_restart_confirm
+        lambda: |-
+          // Header with info icon
+          it.image(4, 5, id(icon_info_big));
+          it.printf(77, 0, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Restart");
+          it.printf(77, 16, id(font_ui_18_bold), TextAlign::TOP_CENTER, "required");
+
+          // OK button
+          it.filled_rectangle(44, 46, 42, 18);
+          it.printf(64, 44, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
+
+      # ============================================
+      # MENU DETAIL: About
+      # ============================================
+      - id: page_menu_about
+        lambda: |-
+          it.printf(64, 0, id(font_ui_21_bold), TextAlign::TOP_CENTER, "ObsidianHub");
+          it.printf(64, 35, id(font_ui_15_bold), TextAlign::CENTER, "V${version}");
+          it.printf(64, 60, id(font5x8), TextAlign::BOTTOM_CENTER, "(C)2025 Marc Schoendorf");
+
+      # ============================================
+      # MENU DETAIL: Connection Status
+      # ============================================
+      - id: page_menu_connection_status
+        lambda: |-
+          it.image(4, 2, id(icon_wifi));
+          it.printf(75, -2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Connection");
+
+          // WiFi status
+          it.printf(1, 24, id(font7x13), TextAlign::TOP_LEFT, "WiFi:");
+          it.printf(127, 24, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(wifi_component).is_connected() ? "Connected" : "Not Connected");
+
+          // API status (Home Assistant)
+          it.printf(1, 37, id(font7x13), TextAlign::TOP_LEFT, "HA-API:");
+          it.printf(127, 37, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(api_component).is_connected() ? "Connected" : "Not Connected");
+
+          // MQTT status
+          it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "MQTT:");
+          it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(mqtt_component).is_connected() ? "Connected" : "Not Connected");
+
+      # ============================================
+      # MENU DETAIL: System Info
+      # ============================================
+      - id: page_menu_system_info
+        lambda: |-
+          it.image(1, 0, id(icon_gear));
+          it.printf(75, -2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "System Info");
+
+          // Free memory
+          it.printf(1, 26, id(font7x13), TextAlign::TOP_LEFT, "Free RAM:");
+          it.printf(127, 26, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
+
+          // Max heap block
+          it.printf(1, 38, id(font7x13), TextAlign::TOP_LEFT, "Max Block:");
+          it.printf(127, 38, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", (float)id(sensor_heap_max_block).state / 1024.0f);
+
+          // Loop time
+          it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "Loop Time:");
+          it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%.0f ms", id(sensor_loop_time).state);
+
+      # ============================================
+      # MENU DETAIL: WiFi Status
+      # ============================================
+      - id: page_menu_wifi_status
+        lambda: |-
+          it.image(4, 1, id(icon_wifi));
+          it.printf(76, -3, id(font_ui_18_bold), TextAlign::TOP_CENTER, "WiFi Status");
+
+          if (id(wifi_component).is_connected())
+          {
+            // IP
+            it.printf(1, 20, id(font6x12), TextAlign::TOP_LEFT, "IP:");
+            auto ips = network::get_ip_addresses();
+            if (!ips.empty())
+              it.printf(127, 20, id(font6x12), TextAlign::TOP_RIGHT, "%s", ips[0].str().c_str());
+
+            // SSID
+            it.printf(1, 31, id(font6x12), TextAlign::TOP_LEFT, "SSID:");
+            it.printf(127, 31, id(font6x12), TextAlign::TOP_RIGHT, "%s", id(wifi_component).wifi_ssid().c_str());
+
+            // Signal strength
+            it.printf(1, 42, id(font6x12), TextAlign::TOP_LEFT, "Signal:");
+            it.printf(127, 42, id(font6x12), TextAlign::TOP_RIGHT, "%.0f%%", id(sensor_wifi_signal_percentage).state);
+
+            // Hostname
+            it.printf(64, 53, id(font6x12), TextAlign::TOP_CENTER, "%s.local", App.get_name().c_str());
+          }
+          else
+          {
+            it.printf(64, 40, id(font_ui_15_bold), TextAlign::CENTER, "Not Connected");
+          }
+
+###############################################################
+# Graphical Display Menu
+###############################################################
+graphical_display_menu:
+  id: main_menu
+  font: font_ui_15_bold
+  mode: rotary
+  active: true
+  items:
+    # Back - close menu
+    - type: command
+      text: "< Back"
+      on_value:
+        then:
+          - lambda: |-
+              // Force save preferences to flash immediately
+              global_preferences->sync();
+              id(is_menu_detail_visible) = false;
+              id(is_menu_visible) = false;
+              id(return_to_current_dashboard).execute();
+
+    # Sub-Menu: Histories
+    - type: menu
+      text: "History Graphs"
+      items:
+        - type: back
+          text: "< Back"
+        - type: command
+          text: "Temperature"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_history_temp));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+        - type: command
+          text: "Humidity"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_history_humid));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+        - type: command
+          text: "Air Quality"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_history_aqi));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+        - type: command
+          text: "eCO2"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_history_eco2));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+        - type: command
+          text: "TVOC"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_history_tvoc));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+    # Sub-Menu: Settings
+    - type: menu
+      text: "Settings"
+      items:
+        # Back
+        - type: back
+          text: "< Back"
+
+        # History graph duration (x-axis)
+        - type: command
+          text: !lambda |-
+            static char buf[32];
+            int min = id(graph_duration_minutes);
+            if (min >= 60) {
+              int h = min / 60;
+              int m = min % 60;
+              if (m == 0)
+                snprintf(buf, sizeof(buf), "Graph: %dh", h);
+              else
+                snprintf(buf, sizeof(buf), "Graph: %dh%dm", h, m);
+            } else {
+              snprintf(buf, sizeof(buf), "Graph: %dm", min);
+            }
+            return buf;
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_graph_duration));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+        # Auto sleep time configuration
+        - type: command
+          text: !lambda |-
+            static char buf[32];
+            int sec = id(sleep_timeout_milliseconds) / 1000;
+            if (sec == 0)
+            {
+              snprintf(buf, sizeof(buf), "Sleep: OFF");
+            }
+            else if (sec < 60)
+            {
+              snprintf(buf, sizeof(buf), "Sleep: %ds", sec);
+            }
+            else
+            {
+              int min = sec / 60;
+              if (min >= 60)
+              {
+                int h = min / 60;
+                int m = min % 60;
+                if (m == 0)
+                  snprintf(buf, sizeof(buf), "Sleep: %dh", h);
+                else
+                  snprintf(buf, sizeof(buf), "Sleep: %dh%dm", h, m);
+              }
+              else
+              {
+                snprintf(buf, sizeof(buf), "Sleep: %dm", min);
+              }
+            }
+            return buf;
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_sleep_config));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+        # Enable LED auto sleep
+        - type: switch
+          immediate_edit: false
+          text: "LED Sleep"
+          on_text: "ON"
+          off_text: "OFF"
+          switch: switch_led_auto_sleep
+
+        # Display brightness
+        - type: custom
+          immediate_edit: false
+          text: "Brightness"
+          value_lambda: 'return to_string((int)(id(display_brightness) * 100.0f)) + "%";'
+          on_next:
+            then:
+              - lambda: |-
+                  int new_val = (int)(id(display_brightness) * 100.0f) + 10;
+                  if (new_val > 100)
+                    new_val = 100;
+                  id(display_brightness) = (float)new_val / 100.0f;
+          on_prev:
+            then:
+              - lambda: |-
+                  int new_val = (int)(id(display_brightness) * 100.0f) - 10;
+                  if (new_val < 10)
+                    new_val = 10;
+                  id(display_brightness) = (float)new_val / 100.0f;
+          on_value:
+            then:
+              - lambda: |-
+                  int val = stoi(it->get_value_text());
+                  id(display_brightness) = (float)val / 100.0f;
+                  id(main_display).set_contrast(id(display_brightness));
+                  id(config_display_brightness).publish_state(val);
+
+        # Invert Display
+        - type: switch
+          immediate_edit: false
+          text: "Inv Display"
+          on_text: "ON"
+          off_text: "OFF"
+          switch: switch_invert_display
+
+     # Sub-Menu: Info
+    - type: menu
+      text: "Info"
+      items:
+        # Back
+        - type: back
+          text: "< Back"
+
+        # Device Info
+        - type: command
+          text: "About"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_about));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+        # Connection Status
+        - type: command
+          text: "Connection Status"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_connection_status));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+        # System Info
+        - type: command
+          text: "System Info"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_system_info));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+        # Wifi Status
+        - type: command
+          text: "WiFi Status"
+          on_value:
+            then:
+              - lambda: |-
+                  id(main_display).show_page(id(page_menu_wifi_status));
+                  id(is_menu_detail_visible) = true;
+                  id(is_menu_visible) = false;
+
+        # Uptime
+        - type: command
+          text: !lambda |-
+            static char buf[48];
+            static float scroll_pos = 0.0;
+            static uint32_t last_scroll = 0;
+            static int scroll_delay = 0;
+            static bool scroll_forward = true;
+            const int max_visible = 17;
+
+            std::string uptime_text = "Uptime: " + id(text_sensor_uptime).state;
+            int text_len = uptime_text.length();
+
+            // Only scroll if text is longer than visible area
+            if (text_len <= max_visible)
+            {
+              snprintf(buf, sizeof(buf), "%s", uptime_text.c_str());
+              return buf;
+            }
+
+            // Scroll every 50ms for smooth animation (adjust as needed)
+            if (millis() - last_scroll > 50)
+            {
+              last_scroll = millis();
+
+              // Pause at the ends
+              if (scroll_delay > 0)
+              {
+                scroll_delay--;
+              }
+              else
+              {
+                if (scroll_forward)
+                {
+                  scroll_pos += 0.25;
+
+                  // Reached the end, start going back
+                  if (scroll_pos >= text_len - max_visible)
+                  {
+                    scroll_pos = text_len - max_visible;
+                    scroll_forward = false;
+                    scroll_delay = 20;  // Pause at end
+                  }
+                }
+                else
+                {
+                  scroll_pos -= 0.6;
+
+                  // Reached the beginning, start going forward
+                  if (scroll_pos <= 0)
+                  {
+                    scroll_pos = 0;
+                    scroll_forward = true;
+                    scroll_delay = 15;  // Pause at start
+                  }
+                }
+              }
+            }
+
+            // Render visible part
+            int start_pos = (int)scroll_pos;
+            snprintf(buf, sizeof(buf), "%s", uptime_text.substr(start_pos, max_visible).c_str());
+            return buf;
+
+###############################################################
+# Graphs
+###############################################################
+graph:
+  # Temperature
+  - id: graph_temp
+    duration: 120min
+    width: 128
+    height: 52
+    border: true
+    x_grid: 30min   # 30min/div
+    y_grid: 1       # units/div
+    #min_value: 0
+    #max_value: 0
+    min_range: 2
+    #max_range: 0
+    traces:
+      - sensor: sensor_temperature
+        name: "Temp"
+        continuous: true
+        line_thickness: 4
+
+  # Humidity
+  - id: graph_humid
+    duration: 120min
+    width: 128
+    height: 53
+    border: true
+    x_grid: 30min   # 30min/div
+    y_grid: 10       # units/div
+    #min_value: 0
+    #max_value: 100
+    min_range: 2
+    #max_range: 100
+    traces:
+      - sensor: sensor_humidity
+        name: "Humid"
+        continuous: true
+        line_thickness: 4
+
+  # Air Quality
+  - id: graph_aqi
+    duration: 120min
+    width: 128
+    height: 53
+    border: true
+    x_grid: 30min    # 30min/div
+    y_grid: 1        # units/div
+    min_value: 0
+    max_value: 5
+    min_range: 5
+    max_range: 5
+    traces:
+      - sensor: sensor_aqi
+        name: "AQI"
+        continuous: true
+        line_thickness: 4
+
+  # eCO2
+  - id: graph_eco2
+    duration: 120min
+    width: 128
+    height: 52
+    border: true
+    x_grid: 30min    # 30min/div
+    y_grid: 250.0    # units/div
+    min_value: 390
+    #max_value: 65000
+    #min_range: 0
+    max_range: 65410
+    traces:
+      - sensor: sensor_eco2
+        name: "eCO2"
+        continuous: true
+        line_thickness: 4
+
+  # TVOC
+  - id: graph_tvoc
+    duration: 120min
+    width: 128
+    height: 52
+    border: true
+    x_grid: 30min    # 30min/div
+    y_grid: 250.0    # units/div
+    min_value: 0
+    #max_value: 65000
+    #min_range: 0
+    max_range: 65000
+    traces:
+      - sensor: sensor_tvoc
+        name: "TVOC"
+        continuous: true
+        line_thickness: 4
+
+###############################################################
+# RGB LED Configuration (SK6812 Addressable LEDs)
+###############################################################
+light:
+  # Master LED strip controller (internal - not exposed to Home Assistant)
+  - platform: esp32_rmt_led_strip
+    name: "All LEDs"
+    id: led_strip_controller
+    rgb_order: GRB
+    pin: GPIO3
+    num_leds: 3
+    chipset: SK6812
+    max_refresh_rate: 12ms
+    restore_mode: ALWAYS_OFF
+    gamma_correct: 2.4
+    default_transition_length: 600ms
+    internal: true
+
+  # Individual LED partitions (exposed to Home Assistant)
+  - platform: partition
+    name: "Status LED"
+    id: led_status
+    restore_mode: ALWAYS_OFF
+    segments:
+      - id: led_strip_controller
+        from: 0
+        to: 0
+    effects:
+      - addressable_rainbow:
+          name: "Rainbow"
+          speed: 8
+          width: 50
+
+  - platform: partition
+    name: "Left Key LED"
+    id: led_key1
+    restore_mode: ALWAYS_OFF
+    segments:
+      - id: led_strip_controller
+        from: 1
+        to: 1
+
+  - platform: partition
+    name: "Right Key LED"
+    id: led_key2
+    restore_mode: ALWAYS_OFF
+    segments:
+      - id: led_strip_controller
+        from: 2
+        to: 2
+
+###############################################################
+# Sensors
+###############################################################
+sensor:
+  # Debug
+  - platform: debug
+    block:
+      name: "Heap Max Block"
+      id: sensor_heap_max_block
+      internal: true
+    loop_time:
+      name: "Loop Time"
+      id: sensor_loop_time
+      internal: true
+
+  # --- WiFi Status ---
+
+  # Signal strength
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    id: sensor_wifi_signal
+    entity_category: "diagnostic"
+    update_interval: 10s
+
+  - platform: copy
+    source_id: sensor_wifi_signal
+    name: "WiFi Signal Strength"
+    id: sensor_wifi_signal_percentage
+    icon: mdi:wifi
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+    device_class: ""
+
+  # --- Environmental Sensors ---
+
+  # AHT20: Temperature and humidity
+  - platform: aht10
+    variant: AHT20
+    update_interval: 5s  # Slower update prevents self-heating
+    address: 0x38
+    temperature:
+      name: "Temperature"
+      id: sensor_temperature
+      accuracy_decimals: 2
+    humidity:
+      name: "Humidity"
+      id: sensor_humidity
+      accuracy_decimals: 2
+
+  # BMP280: Atmospheric pressure
+  - platform: bmp280_i2c
+    address: 0x77
+    update_interval: 10s
+    iir_filter: 4x
+    pressure:
+      name: "Atmospheric Pressure"
+      oversampling: 16x
+
+  # ENS160: Air quality sensor (CO2, TVOC, AQI)
+  - platform: ens160_spi
+    cs_pin: GPIO2
+    data_rate: 200kHz
+    update_interval: 5s
+    eco2:
+      name: "eCO2"
+      id: sensor_eco2
+    tvoc:
+      name: "TVOC (Total Volatile Organic Compounds)"
+      id: sensor_tvoc
+      icon: mdi:molecule
+    aqi:
+      name: "Air Quality Index"
+      id: sensor_aqi
+    compensation:
+      temperature: sensor_temperature
+      humidity: sensor_humidity
+
+  # BH1750: Ambient light sensor
+  - platform: bh1750
+    name: "Illuminance"
+    address: 0x23
+    update_interval: 1500ms
+
+  # --- User Input Sensors ---
+
+  # Rotary encoder
+  - platform: rotary_encoder
+    name: "Rotary Encoder"
+    id: encoder_input
+    pin_a:
+      number: GPIO7
+      inverted: true
+    pin_b:
+      number: GPIO10
+      inverted: true
+    min_value: 0
+    max_value: 100
+    resolution: 1
+    internal: true
+    on_clockwise:
+      - lambda: |-
+          // Do nothing if still booting
+          if (!id(is_boot_complete))
+            return;
+
+          // Ignore encoder rotation on restart page or WiFi AP mode page
+          if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
+              || id(main_display).get_active_page() == id(page_is_restarting)
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_is_ota_updating))
+            return;
+
+          if (id(is_menu_visible))
+          {
+            id(main_menu).down();
+          }
+          else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
+          {
+            // Adjust sleep timeout with adaptive steps
+            int current_seconds = id(sleep_timeout_milliseconds) / 1000;
+            int step_seconds;
+            if (current_seconds < 60)
+              step_seconds = 5;
+            else if (current_seconds < 600)
+              step_seconds = 60;
+            else
+              step_seconds = 600;
+
+            int new_val = min(current_seconds + step_seconds, 7200);
+            id(sleep_timeout_milliseconds) = new_val * 1000;
+            id(config_auto_sleep).publish_state(new_val);
+          }
+          else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
+          {
+            // Adjust graph duration with adaptive steps
+            int current = id(graph_duration_minutes);
+            int step;
+            if (current < 10)
+              step = 1;
+            else if (current < 60)
+              step = 10;
+            else
+              step = 60;
+
+            int new_val = min(current + step, 1440);
+            id(graph_duration_minutes) = new_val;
+          }
+          else
+          {
+            // Brightness adjustment (2% steps)
+            int current = id(brightness_control).state;
+            int new_val = min(current + 2, 100);
+            id(brightness_control).publish_state(new_val);
+
+            // Save current page and switch to brightness page
+            if (id(main_display).get_active_page() != id(page_brightness_control))
+              id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
+
+            id(main_display).show_page(id(page_brightness_control));
+            id(return_to_last_saved_page_with_delay).stop();
+            id(return_to_last_saved_page_with_delay).execute();
+          }
+
+          id(wake_display_and_reset_timer).execute();
+
+    on_anticlockwise:
+      - lambda: |-
+          // Do nothing if still booting
+          if (!id(is_boot_complete))
+            return;
+
+          // Ignore encoder rotation on restart page or WiFi AP mode page
+          if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
+              || id(main_display).get_active_page() == id(page_is_restarting)
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_is_ota_updating))
+            return;
+
+          if (id(is_menu_visible))
+          {
+            id(main_menu).up();
+          }
+          else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
+          {
+            // Adjust sleep timeout with adaptive steps
+            int current_seconds = id(sleep_timeout_milliseconds) / 1000;
+            int step_seconds;
+            if (current_seconds <= 60)
+              step_seconds = 5;
+            else if (current_seconds <= 600)
+              step_seconds = 60;
+            else
+              step_seconds = 600;
+
+            int new_val = max(current_seconds - step_seconds, 0);
+            id(sleep_timeout_milliseconds) = new_val * 1000;
+            id(config_auto_sleep).publish_state(new_val);
+          }
+          else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
+          {
+            // Adjust graph duration with adaptive steps
+            int current = id(graph_duration_minutes);
+            int step;
+            if (current <= 10)
+              step = 1;
+            else if (current <= 60)
+              step = 10;
+            else
+              step = 60;
+
+            int new_val = max(current - step, 1);
+            id(graph_duration_minutes) = new_val;
+          }
+          else
+          {
+            // Brightness adjustment (2% steps)
+            int current = id(brightness_control).state;
+            int new_val = max(current - 2, 0);
+            id(brightness_control).publish_state(new_val);
+
+            // Save current page and switch to brightness page
+            if (id(main_display).get_active_page() != id(page_brightness_control))
+              id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
+
+            id(main_display).show_page(id(page_brightness_control));
+            id(return_to_last_saved_page_with_delay).stop();
+            id(return_to_last_saved_page_with_delay).execute();
+          }
+
+          id(wake_display_and_reset_timer).execute();
+
+  # --- MQTT System Monitor ---
+
+  # CPU
+  - platform: mqtt_subscribe
+    name: "CPU Usage"
+    id: mqtt_cpu_percent
+    topic: "obsidianhub/pc/cpu"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            id(system_monitor_mqtt_last_update) = millis();
+
+  # RAM
+  - platform: mqtt_subscribe
+    name: "RAM Percent"
+    id: mqtt_ram_percent
+    topic: "obsidianhub/pc/ram/percent"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    internal: true
+  #- platform: mqtt_subscribe
+  #  name: "RAM Used"
+  #  id: mqtt_ram_used
+  #  topic: "obsidianhub/pc/ram/used"
+  #  unit_of_measurement: "GB"
+  #  accuracy_decimals: 2
+  #  internal: true
+  #- platform: mqtt_subscribe
+  #  name: "RAM Total"
+  #  id: mqtt_ram_total
+  #  topic: "obsidianhub/pc/ram/total"
+  #  unit_of_measurement: "GB"
+  #  accuracy_decimals: 2
+  #  internal: true
+
+  # Disk Metrics
+  #- platform: mqtt_subscribe
+  #  name: "Disk Percent"
+  #  id: mqtt_disk_percent
+  #  topic: "obsidianhub/pc/disk/percent"
+  #  unit_of_measurement: "%"
+  #  accuracy_decimals: 1
+  #  internal: true
+  #- platform: mqtt_subscribe
+  #  name: "Disk Used"
+  #  id: mqtt_disk_used
+  #  topic: "obsidianhub/pc/disk/used"
+  #  unit_of_measurement: "GB"
+  #  accuracy_decimals: 2
+  #  internal: true
+  #- platform: mqtt_subscribe
+  #  name: "Disk Free"
+  #  id: mqtt_disk_free
+  #  topic: "obsidianhub/pc/disk/free"
+  #  unit_of_measurement: "GB"
+  #  accuracy_decimals: 2
+  #  internal: true
+  #- platform: mqtt_subscribe
+  #  name: "Disk Total"
+  #  id: mqtt_disk_total
+  #  topic: "obsidianhub/pc/disk/total"
+  #  unit_of_measurement: "GB"
+  #  accuracy_decimals: 2
+  #  internal: true
+
+  # Disk I/O Metrics
+  - platform: mqtt_subscribe
+    name: "Disk Read"
+    id: mqtt_disk_read
+    topic: "obsidianhub/pc/disk/read"
+    unit_of_measurement: "MB"
+    accuracy_decimals: 2
+    internal: true
+  - platform: mqtt_subscribe
+    name: "Disk Write"
+    id: mqtt_disk_write
+    topic: "obsidianhub/pc/disk/write"
+    unit_of_measurement: "MB"
+    accuracy_decimals: 2
+    internal: true
+
+  # Network I/O Metrics
+  - platform: mqtt_subscribe
+    name: "Network Download"
+    id: mqtt_net_recv
+    topic: "obsidianhub/pc/net/recv"
+    unit_of_measurement: "MB/s"
+    accuracy_decimals: 2
+    internal: true
+  - platform: mqtt_subscribe
+    name: "Network Upload"
+    id: mqtt_net_sent
+    topic: "obsidianhub/pc/net/sent"
+    unit_of_measurement: "MB/s"
+    accuracy_decimals: 2
+    internal: true
+
+  # --- HomeAssistant Brightness Sync ---
+
+  # Sync brightness from Home Assistant on boot/reconnect
+  - platform: homeassistant
+    id: brightness_sync_boot
+    entity_id: light.wled_main
+    attribute: brightness
+    internal: true
+    filters:
+      #- filter_out: nan  # Ignore None/null values
+      - lambda: |-
+          // Prevent negative/invalid values
+          if (std::isnan(x) || x > 255 || x < 0)
+            return 0;
+          return x;
+
+###############################################################
+# Text Sensors
+###############################################################
+text_sensor:
+  # Uptime
+  - platform: uptime
+    name: "Uptime"
+    id: text_sensor_uptime
+    update_interval: 10s
+    format:
+      separator: " "
+      days: "D"
+      expand: true
+
+  # Convert numeric AQI to descriptive text
+  - platform: template
+    name: "Air Quality"
+    icon: mdi:chemical-weapon
+    update_interval: 1s
+    lambda: |-
+      switch ((int)(id(sensor_aqi).state))
+      {
+          case 1: return {"Excellent"};
+          case 2: return {"Good"};
+          case 3: return {"Moderate"};
+          case 4: return {"Poor"};
+          case 5: return {"Unhealthy"};
+          default: return {"Not Available"};
+      }
+
+###############################################################
+# Binary Sensors (Physical Buttons)
+###############################################################
+binary_sensor:
+  # Left tactile button
+  - platform: gpio
+    pin:
+      number: GPIO21
+      inverted: true
+    name: "Left Switch"
+    id: button_left
+    use_interrupt: true
+    filters:
+      - delayed_on: 10ms  # Debounce
+    on_press:
+      - script.execute: wake_display_and_reset_timer
+
+  # Right tactile button
+  - platform: gpio
+    pin:
+      number: GPIO20
+      inverted: true
+    name: "Right Switch"
+    id: button_right
+    use_interrupt: true
+    filters:
+      - delayed_on: 10ms  # Debounce
+    on_press:
+      - script.execute: wake_display_and_reset_timer
+
+  # Rotary encoder push button
+  - platform: gpio
+    pin:
+      number: GPIO6
+      inverted: true
+    name: "Encoder Switch"
+    id: button_encoder
+    use_interrupt: true
+    filters:
+      - delayed_on: 10ms  # Debounce
+    # On button down
+    on_press:
+      - lambda: |-
+          // Do nothing if still booting, on WiFi AP mode page or restart page
+          if (!id(is_boot_complete)
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_is_restarting)
+              || id(main_display).get_active_page() == id(page_is_ota_updating))
+            return;
+
+          // Only ignore next short press if fully asleep (not just fading out into sleep)
+          if (id(is_display_sleeping))
+            id(ignore_next_encoder_button_press_after_wake_up) = true;
+
+          // Wake immediately when button is pressed down and check for long press
+          id(wake_display_and_reset_timer).execute();
+          id(check_for_long_press).stop();
+          id(check_for_long_press).execute();
+    on_click:
+      # Short press (button released again)
+      - min_length: 20ms
+        max_length: 599ms
+        then:
+          - lambda: |-
+              id(check_for_long_press).stop();
+
+              // Do nothing if still booting, on WiFi AP mode page or restart page
+              if (!id(is_boot_complete)
+                  || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+                  || id(main_display).get_active_page() == id(page_is_restarting)
+                  || id(main_display).get_active_page() == id(page_is_ota_updating))
+                return;
+
+              if (id(ignore_next_encoder_button_press_after_wake_up))
+              {
+                // Ignore this button press (when waking up from sleep)
+                id(ignore_next_encoder_button_press_after_wake_up) = false;
+                return;
+              }
+
+              // Stop script in case we are on brightness page with automatic return to last saved page
+              id(return_to_last_saved_page_with_delay).stop();
+
+              // Handle restart confirmation page - restart device immediately
+              if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm))
+              {
+                // Show "Restarting..." page
+                id(main_display).show_page(id(page_is_restarting));
+
+                // Force save preferences to flash immediately
+                global_preferences->sync();
+                delay(1000);
+
+                App.safe_reboot();
+
+                return;
+              }
+
+              // Check if leaving graph duration page - show restart confirmation
+              if (id(main_display).get_active_page() == id(page_menu_graph_duration) &&
+                  id(is_menu_detail_visible))
+              {
+                // Update graphs and show restart confirmation
+                id(update_graph_durations).execute();
+                id(main_display).show_page(id(page_graph_duration_restart_confirm));
+                return;
+              }
+
+              if (id(is_menu_visible))
+              {
+                id(main_menu).enter();
+              }
+              else if (id(is_menu_detail_visible))
+              {
+                id(is_menu_detail_visible) = false;
+                id(is_menu_visible) = true;
+                id(main_display).show_page(id(page_menu));
+              }
+              else
+              {
+                // Cycle through pages
+                id(current_dashboard_page) = (id(current_dashboard_page) + 1) % ${num_dashboard_pages};
+                id(return_to_current_dashboard).execute();
+              }
+
+###############################################################
+# Control Buttons
+###############################################################
+button:
+  # Reboot
+  - platform: template
+    name: "Reboot ObsidianHub"
+    id: button_restart
+    icon: mdi:restart
+    entity_category: "config"
+    on_press:
+      - lambda: |-
+          // Show "Restarting..." page
+          id(main_display).show_page(id(page_is_restarting));
+          id(wake_display_and_reset_timer).execute();
+          id(main_display).update();
+
+          // Force save preferences to flash immediately
+          global_preferences->sync();
+      - delay: 2s
+      - lambda: |-
+          id(main_display).set_contrast(0.0f);
+          App.safe_reboot();
+
+  # Shutdown
+  - platform: shutdown
+    name: "Shutdown ObsidianHub"
+
+  # Factory Reset
+  - platform: template
+    name: "Reset To Factory Defaults"
+    icon: mdi:cog
+    entity_category: "config"
+    on_press:
+      - lambda: |-
+          // Show "Restarting..." page
+          id(main_display).show_page(id(page_is_restarting));
+          id(wake_display_and_reset_timer).execute();
+          id(main_display).update();
+
+          global_preferences->reset();
+      - delay: 2s
+      - lambda: |-
+          id(main_display).set_contrast(0.0f);
+          App.safe_reboot();
+
+###############################################################
+# Configuration Switches
+###############################################################
+switch:
+  - platform: template
+    name: "Enable LED Auto Sleep"
+    id: switch_led_auto_sleep
+    entity_category: "config"
+    icon: mdi:timer
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    on_state:
+      then:
+        - script.execute: wake_display_and_reset_timer
+
+  - platform: template
+    name: "Invert Display"
+    id: switch_invert_display
+    entity_category: "config"
+    icon: mdi:theme-light-dark
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    on_turn_on:
+      then:
+        - script.execute: wake_display_and_reset_timer
+        - lambda: |-
+            id(main_display).set_invert(true);
+    on_turn_off:
+      then:
+        - script.execute: wake_display_and_reset_timer
+        - lambda: |-
+            id(main_display).set_invert(false);
+
+###############################################################
+# Configuration Numbers
+###############################################################
+number:
+  # Brightness control - can be read and set from Home Assistant
+  - platform: template
+    name: "Brightness Control"
+    id: brightness_control
+    icon: mdi:brightness-percent
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 0
+    restore_value: true
+    optimistic: true
+    set_action:
+      - lambda: |-
+          // This runs whenever the value changes (from encoder or from Home Assistant)
+          id(brightness_control).publish_state(x);
+
+          // Do nothing if still booting, on WiFi AP mode page or restart page
+          if (!id(is_boot_complete)
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_is_restarting))
+            return;
+
+          // Save current page and switch to brightness page
+          if (id(main_display).get_active_page() != id(page_brightness_control))
+            id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
+
+          id(main_display).show_page(id(page_brightness_control));
+          id(return_to_last_saved_page_with_delay).stop();
+          id(return_to_last_saved_page_with_delay).execute();
+
+          // Wake display and show brightness page
+          id(wake_display_and_reset_timer).execute();
+
+  # Display brightness
+  - platform: template
+    name: "Display Brightness"
+    id: config_display_brightness
+    entity_category: "config"
+    icon: mdi:monitor
+    restore_value: true
+    optimistic: true
+    min_value: 10
+    max_value: 100
+    initial_value: 100
+    step: 10
+    unit_of_measurement: "%"
+    on_value:
+      then:
+        - lambda: |-
+            id(wake_display_and_reset_timer).execute();
+            id(display_brightness) = ((float)x / 100.0f);
+            id(main_display).set_contrast(id(display_brightness));
+
+  # Auto sleep
+  - platform: template
+    name: "Auto Sleep"
+    id: config_auto_sleep
+    entity_category: "config"
+    icon: mdi:timer
+    restore_value: true
+    optimistic: true
+    min_value: 0       # 0 = never sleep
+    max_value: 7200    # Max 2 hours
+    initial_value: 20  # Default 20 seconds
+    step: 1
+    unit_of_measurement: "s"
+    mode: box
+    on_value:
+      then:
+        - lambda: |-
+            id(wake_display_and_reset_timer).execute();
+            id(sleep_timeout_milliseconds) = (uint32_t)(x * 1000);
