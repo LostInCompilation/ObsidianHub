@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.4"
+  version: "1.1.4"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -216,7 +216,7 @@ time:
 #  port: 80
 #  auth:
 #    username: ObsidianHub
-#    password: ObsidianHub
+#    password: ObsidianHubServer
 
 ###############################################################
 # I2C Bus Configuration
