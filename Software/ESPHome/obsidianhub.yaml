@@ -20,7 +20,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.2"
+  version: "1.0.3"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -110,7 +110,7 @@ api:
 ota:
   - platform: esphome
     id: ota_component
-    password: !secret obsidian_hub_ota_password
+    password: !secret obsidian_hub_ota_password "ObsidianHubOTA2025"
 
     on_begin:
       then:
