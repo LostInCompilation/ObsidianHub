@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.0"
+  version: "1.0.3"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -201,6 +201,7 @@ mqtt:
 time:
   - platform: sntp
     id: sntp_time
+    update_interval: 1h
     timezone: Europe/Berlin
     servers:
      - 0.pool.ntp.org
