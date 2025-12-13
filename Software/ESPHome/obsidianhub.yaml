@@ -10,6 +10,7 @@
 ###############################################################
 
 # ToDo:
+# - Red pulse timing
 # - Weather station dashboard
 # - Brightness sync on boot fix
 # - Graph range and grid
@@ -71,7 +72,7 @@ logger:
     api: WARN
 
 debug:
-  update_interval: 5s
+  update_interval: 10s
 
 ###############################################################
 # Home Assistant Integration
@@ -176,12 +177,12 @@ ota:
             id(ota_progress) = -1.0f;
             id(main_display).update();
 
-# Update Component
+# Update component
 update:
   - platform: http_request
     name: "Firmware Update (HTTP)"
     id: update_firmware_component_http
-    update_interval: 1min
+    update_interval: 3min
     device_class: "firmware"
     entity_category: "config"
     internal: true
@@ -479,7 +480,7 @@ font:
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°-0123456789\u0025"
 
   # --- Headers ---
   - file:
@@ -1353,17 +1354,17 @@ display:
           it.printf(79, 43, id(font6x12), TextAlign::TOP_LEFT, "U %.1fMb", id(mqtt_net_sent).state * 8.0f);
           it.printf(79, 53, id(font6x12), TextAlign::TOP_LEFT, "D %.1fMb", id(mqtt_net_recv).state * 8.0f);
 
-          // CPU progress bar (using smoothed value)
-          int BAR_W = 75;
-          int BAR_H = 9;
-          int BAR_X = 26;
+          // CPU progress bar
+          const int BAR_W = 75;
+          const int BAR_H = 9;
+          const int BAR_X = 26;
           int BAR_Y = 1;
           int fill_w = (int)( (smooth_cpu / 100.0f) * (BAR_W - 4) );
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
           if (fill_w > 0)
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
 
-          // RAM progress bar (using smoothed value)
+          // RAM progress bar
           BAR_Y = 14;
           fill_w = (int)( (smooth_ram / 100.0f) * (BAR_W - 4) );
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
@@ -1693,7 +1694,7 @@ display:
       - id: page_menu_about
         lambda: |-
           it.printf(64, 0, id(font_ui_21_bold), TextAlign::TOP_CENTER, "ObsidianHub");
-          it.printf(64, 35, id(font_ui_15_bold), TextAlign::CENTER, "V${version}");
+          it.printf(64, 35, id(font_ui_15_bold), TextAlign::CENTER, "v${version}");
           it.image(1, 52, id(icon_copyright));
 
       # ============================================
@@ -1761,8 +1762,7 @@ display:
             it.printf(127, 42, id(font6x12), TextAlign::TOP_RIGHT, "%.0f%%", id(sensor_wifi_signal_percentage).state);
 
             // MAC
-            it.printf(1, 53, id(font6x12), TextAlign::TOP_LEFT, "MAC:");
-            it.printf(127, 53, id(font6x12), TextAlign::TOP_RIGHT, "%s", get_mac_address_pretty().c_str());
+            it.printf(64, 53, id(font6x12), TextAlign::TOP_CENTER, "%s", get_mac_address_pretty().c_str());
           }
           else
           {
@@ -2201,12 +2201,6 @@ light:
             - state: false
               duration: 550ms
               transition_length: 550ms
-      - pulse:
-          name: "Blue Pulse Old"
-          transition_length: 1350ms
-          update_interval: 1400ms
-          min_brightness: 0%
-          max_brightness: 100%
       - pulse:
           name: "Red Pulse"
           transition_length:
@@ -2783,8 +2777,8 @@ button:
           App.safe_reboot();
 
   # Shutdown
-  - platform: shutdown
-    name: "Shutdown ObsidianHub"
+  #- platform: shutdown
+  #  name: "Shutdown ObsidianHub"
 
   # Factory Reset
   - platform: template
