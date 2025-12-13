@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.5"
+  version: "1.0.2"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -33,7 +33,6 @@ esphome:
   name: obsidianhub
   friendly_name: ObsidianHub
   comment: "SmartHome Dashboard with multiple environmental sensors"
-  name_add_mac_suffix: true
   min_version: 2025.11.3
   project:
     name: "Marc.ObsidianHub"
@@ -72,7 +71,7 @@ logger:
     api: WARN
 
 debug:
-  update_interval: 60s
+  update_interval: 5s
 
 ###############################################################
 # Home Assistant Integration
@@ -181,8 +180,7 @@ update:
     update_interval: 1min
     device_class: "firmware"
     entity_category: "config"
-    #icon:
-    #internal: true
+    internal: true
     source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
     on_update_available:
       then:
@@ -1063,8 +1061,12 @@ display:
       # ============================================
       - id: page_update_available
         lambda: |-
-          it.printf(64, 25, id(font_ui_15_bold), TextAlign::CENTER, "Firmware Update");
-          it.printf(64, 40, id(font_ui_15_bold), TextAlign::CENTER, "Available");
+          it.printf(64, 15, id(font_ui_15_bold), TextAlign::CENTER, "Firmware Update");
+          it.printf(64, 31, id(font_ui_15_bold), TextAlign::CENTER, "Available");
+
+          // OK button
+          it.filled_rectangle(44, 46, 60, 18);
+          it.printf(64, 44, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "INSTALL");
 
       # ============================================
       # OTA UPDATING PAGE
@@ -2656,6 +2658,14 @@ binary_sensor:
 
               // Stop script in case we are on brightness page with automatic return to last saved page
               id(return_to_last_saved_page_with_delay).stop();
+
+              // Handle update available page
+              if (id(main_display).get_active_page() == id(page_update_available))
+              {
+                // Install update
+                id(update_firmware_component_http).perform(true);
+                return;
+              }
 
               // Handle restart confirmation page - restart device immediately
               if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm))

@@ -1,6 +1,6 @@
 {
   "name": "ObsidianHub",
-  "version": "1.0.5",
+  "version": "1.0.2",
   "builds": [
     {
       "chipFamily": "ESP32-C3",
