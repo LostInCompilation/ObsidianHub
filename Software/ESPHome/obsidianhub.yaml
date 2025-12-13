@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.2"
+  version: "1.0.3"
   num_dashboard_pages: 3
 
 dashboard_import:
