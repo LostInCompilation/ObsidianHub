@@ -19,7 +19,7 @@
 # Substitutions
 ###############################################################
 substitutions:
-  version: "1.0.3"
+  version: "1.0.4"
   num_dashboard_pages: 3
 
 dashboard_import:
@@ -33,7 +33,7 @@ esphome:
   name: obsidianhub
   friendly_name: ObsidianHub
   comment: "SmartHome Dashboard with multiple environmental sensors"
-  min_version: 2025.11.3
+  min_version: 2025.11.1
   project:
     name: "Marc.ObsidianHub"
     version: "${version}"
@@ -59,7 +59,7 @@ esp32:
 # Flash Memory Writing
 ###############################################################
 preferences:
-  flash_write_interval: 5min
+  flash_write_interval: 10min
 
 ###############################################################
 # Logging
@@ -71,7 +71,7 @@ logger:
     api: WARN
 
 debug:
-  update_interval: 10s
+  update_interval: 5s
 
 ###############################################################
 # Home Assistant Integration
@@ -85,39 +85,39 @@ api:
     key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
 
   on_client_connected:
-    - delay: 500ms
+    #- delay: 500ms
     - lambda: |-
-        //ESP_LOGI("brightness", "HA connected — performing brightness sync");
+        /*ESP_LOGI("brightness", "HA connected — performing brightness sync");
 
         id(brightness_sync_boot).call();
 
         if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
         {
-          //ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
+          ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
           return;
         }
 
         float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
         uint32_t pct = clamp((int)lround(tmp), 0, 100);
 
-        //ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
+        ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
 
-        id(brightness_control).publish_state(pct);
+        id(brightness_control).publish_state(pct);*/
 
 ###############################################################
 # HTTP Requests
 ###############################################################
 http_request:
   follow_redirects: true
-  redirect_limit: 5
-  timeout: 7s
+  redirect_limit: 4
+  timeout: 5s
   #watchdog_timeout: 30s
 
 ###############################################################
 # Over-The-Air Firmware Updates
 ###############################################################
 ota:
-  # HTTP
+  # HTTP (managed)
   - platform: http_request
     id: ota_component_http
     on_begin:
@@ -179,7 +179,7 @@ ota:
 # Update Component
 update:
   - platform: http_request
-    name: Firmware Update (HTTP)
+    name: "Firmware Update (HTTP)"
     id: update_firmware_component_http
     update_interval: 1min
     device_class: "firmware"
@@ -245,11 +245,14 @@ wifi:
     password: "ObsidianHub2025"
     #ap_timeout: 60s
 
+# Captive Portal for WiFi Setup
 captive_portal:
+
+# Improv over serial as backup method
+improv_serial:
 
 ###############################################################
 # MQTT Configuration (Optional)
-# Uncomment to enable MQTT alongside or instead of Home Assistant API
 ###############################################################
 mqtt:
   broker: !secret mqtt_broker
@@ -263,7 +266,6 @@ mqtt:
   client_id: obsidianhub
   reboot_timeout: 0s
   idf_send_async: true
-
   discovery: false    # HA automatic entity discovery
   discover_ip: false  # HA automatic device discovery
 
@@ -469,11 +471,15 @@ font:
   # --- Diverse Elements ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13.bdf"
     id: font7x13
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:0123456789\u0025"
+
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13B.bdf"
     id: font7x13B
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .0123456789"
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°0123456789\u0025"
 
   # --- Headers ---
   - file:
@@ -482,6 +488,7 @@ font:
       weight: 550
     id: font_ui_18_bold
     size: 18
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ."
 
   # --- Sub-Header, Menu, Temp & Humid Values ---
   - file:
@@ -490,6 +497,7 @@ font:
       weight: 650
     id: font_ui_15_bold
     size: 15
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .!°<>()0123456789\u0025"
 
   # --- Large Numbers ---
   - file:
@@ -1111,8 +1119,8 @@ display:
       # ============================================
       - id: page_wifi_ap_mode
         lambda: |-
-          it.printf(30, 25, id(font_ui_15_bold), TextAlign::CENTER, "Setup");
-          it.printf(30, 39, id(font_ui_15_bold), TextAlign::CENTER, "WiFi");
+          it.printf(28, 25, id(font_ui_15_bold), TextAlign::CENTER, "Setup");
+          it.printf(28, 39, id(font_ui_15_bold), TextAlign::CENTER, "WiFi");
 
           // Draw the QR-code
           it.qr_code(62, 0, id(wifi_ap_qr_code), COLOR_ON, 2);
@@ -1675,7 +1683,7 @@ display:
           it.printf(77, 16, id(font_ui_18_bold), TextAlign::TOP_CENTER, "required");
 
           // OK button
-          const int button_width = 42;
+          const int button_width = 40;
           it.filled_rectangle(64 - (button_width / 2), 44, button_width, 19);
           it.printf(64, 43, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
 
@@ -1752,8 +1760,9 @@ display:
             it.printf(1, 42, id(font6x12), TextAlign::TOP_LEFT, "Signal:");
             it.printf(127, 42, id(font6x12), TextAlign::TOP_RIGHT, "%.0f%%", id(sensor_wifi_signal_percentage).state);
 
-            // Hostname
-            it.printf(64, 53, id(font6x12), TextAlign::TOP_CENTER, "%s.local", App.get_name().c_str());
+            // MAC
+            it.printf(1, 42, id(font6x12), TextAlign::TOP_LEFT, "MAC:");
+            it.printf(64, 53, id(font6x12), TextAlign::TOP_CENTER, "%s", get_mac_address_pretty().c_str());
           }
           else
           {
@@ -2163,6 +2172,11 @@ light:
     gamma_correct: 2.4
     default_transition_length: 600ms
     internal: true
+    effects:
+      - addressable_rainbow:
+          name: "Rainbow"
+          speed: 8
+          width: 50
 
   # Individual LED partitions (exposed to Home Assistant)
   - platform: partition
@@ -2174,21 +2188,32 @@ light:
         from: 0
         to: 0
     effects:
-      - addressable_rainbow:
-          name: "Rainbow"
-          speed: 8
-          width: 50
-      - pulse:
+      - strobe:
           name: "Blue Pulse"
-          transition_length: 1200ms
-          update_interval: 1200ms
-          min_brightness: 30%
+          colors:
+            - state: true
+              brightness: 100%
+              red: 0%
+              green: 0%
+              blue: 100%
+              duration: 2000ms
+              transition_length: 1300ms
+            - state: false
+              duration: 550ms
+              transition_length: 550ms
+      - pulse:
+          name: "Blue Pulse Old"
+          transition_length: 1350ms
+          update_interval: 1400ms
+          min_brightness: 0%
           max_brightness: 100%
       - pulse:
           name: "Red Pulse"
-          transition_length: 800ms
+          transition_length:
+            on_length: 600ms
+            off_length: 400ms
           update_interval: 800ms
-          min_brightness: 30%
+          min_brightness: 0%
           max_brightness: 100%
 
   - platform: partition
@@ -2231,7 +2256,7 @@ sensor:
     name: "WiFi Signal"
     id: sensor_wifi_signal
     entity_category: "diagnostic"
-    update_interval: 10s
+    update_interval: 2s
 
   - platform: copy
     source_id: sensor_wifi_signal
