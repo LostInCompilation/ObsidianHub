@@ -71,8 +71,8 @@ logger:
     wifi: WARN
     api: WARN
 
-debug:
-  update_interval: 10s
+#debug:
+#  update_interval: 10s
 
 ###############################################################
 # Home Assistant Integration
@@ -244,7 +244,6 @@ wifi:
   ap:
     ssid: "ObsidianHub-AP"
     password: "ObsidianHub2025"
-    #ap_timeout: 60s
 
 # Captive Portal for WiFi Setup
 captive_portal:
@@ -1730,12 +1729,12 @@ display:
           it.printf(127, 26, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
 
           // Max heap block
-          it.printf(1, 38, id(font7x13), TextAlign::TOP_LEFT, "Max Block:");
-          it.printf(127, 38, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", (float)id(sensor_heap_max_block).state / 1024.0f);
+          //it.printf(1, 38, id(font7x13), TextAlign::TOP_LEFT, "Max Block:");
+          //it.printf(127, 38, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", (float)id(sensor_heap_max_block).state / 1024.0f);
 
           // Loop time
-          it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "Loop Time:");
-          it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%.0f ms", id(sensor_loop_time).state);
+          //it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "Loop Time:");
+          //it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%.0f ms", id(sensor_loop_time).state);
 
       # ============================================
       # MENU DETAIL: WiFi Status
@@ -2233,15 +2232,15 @@ light:
 ###############################################################
 sensor:
   # Debug
-  - platform: debug
-    block:
-      name: "Heap Max Block"
-      id: sensor_heap_max_block
-      internal: true
-    loop_time:
-      name: "Loop Time"
-      id: sensor_loop_time
-      internal: true
+  #- platform: debug
+  #  block:
+  #    name: "Heap Max Block"
+  #    id: sensor_heap_max_block
+  #    internal: true
+  #  loop_time:
+  #    name: "Loop Time"
+  #    id: sensor_loop_time
+  #    internal: true
 
   # --- WiFi Status ---
 
