@@ -121,13 +121,15 @@ ota:
   - platform: http_request
     id: ota_component_http
     on_begin:
-        then:
-          - lambda: |-
-              id(return_to_last_saved_page_with_delay).stop();
+      then:
+        - lambda: |-
+            id(return_to_last_saved_page_with_delay).stop();
 
-              id(ota_progress) = 0.0f;
-              id(main_display).show_page(id(page_is_ota_updating));
-              id(wake_display_and_reset_timer).execute();
+            id(ota_progress) = 0.0f;
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
+            id(main_display).show_page(id(page_is_updating));
+            id(wake_display_and_reset_timer).execute();
     on_progress:
       then:
         - lambda: |-
@@ -154,7 +156,9 @@ ota:
             id(return_to_last_saved_page_with_delay).stop();
 
             id(ota_progress) = 0.0f;
-            id(main_display).show_page(id(page_is_ota_updating));
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
+            id(main_display).show_page(id(page_is_updating));
             id(wake_display_and_reset_timer).execute();
     on_progress:
       then:
@@ -187,6 +191,9 @@ update:
         - lambda: |-
             id(return_to_last_saved_page_with_delay).stop();
 
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
+
             id(main_display).show_page(id(page_update_available));
             id(wake_display_and_reset_timer).execute();
 
@@ -214,6 +221,9 @@ wifi:
         if (!id(wifi_has_been_setup_by_user) || id(main_display).get_active_page() == id(page_wifi_ap_mode))
         {
           // Show dashboard and set status LED to green
+          id(is_menu_detail_visible) = false;
+          id(is_menu_visible) = false;
+
           id(main_display).show_page(id(page_main_dashboard));
           id(wake_display_and_reset_timer).execute();
 
@@ -647,6 +657,7 @@ script:
           {
             id(return_to_last_saved_page_with_delay).stop();
             id(is_menu_visible) = true;
+            id(is_menu_detail_visible) = false;
             id(main_display).show_page(id(page_menu));
           }
 
@@ -796,11 +807,13 @@ interval:
 
   # Save current LED states to flash
   - interval: 500ms
-    startup_delay: 6s
+    startup_delay: 5s
     then:
       - lambda: |-
-          // Don't save when updating
-          if (id(main_display).get_active_page() == id(page_is_ota_updating))
+          // Don't save while on some pages
+          if (id(main_display).get_active_page() == id(page_is_updating)
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_update_available))
             return;
 
           // Save Status LED state
@@ -852,9 +865,9 @@ interval:
               id(return_to_last_saved_page_with_delay).stop();
 
               // Show AP page and do nothing
-              id(main_display).show_page(id(page_wifi_ap_mode));
               id(is_menu_detail_visible) = false;
               id(is_menu_visible) = false;
+              id(main_display).show_page(id(page_wifi_ap_mode));
 
               // Status LEDs
               if (!leds_have_been_set)
@@ -880,7 +893,7 @@ interval:
     then:
       - lambda: |-
           // Constants for smooth visual fading
-          static const uint32_t BOOT_LOGO_HOLD_MS = 4400;
+          static const uint32_t BOOT_LOGO_HOLD_MS = 4000;
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.4f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
@@ -964,7 +977,7 @@ interval:
                   && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
                   && id(main_display).get_active_page() != id(page_is_restarting)
                   && id(main_display).get_active_page() != id(page_wifi_ap_mode)
-                  && id(main_display).get_active_page() != id(page_is_ota_updating)
+                  && id(main_display).get_active_page() != id(page_is_updating)
                   && id(main_display).get_active_page() != id(page_update_available))
           {
               static uint32_t fade_start = 0;
@@ -1061,17 +1074,18 @@ display:
       # ============================================
       - id: page_update_available
         lambda: |-
-          it.printf(64, 15, id(font_ui_15_bold), TextAlign::CENTER, "Firmware Update");
-          it.printf(64, 31, id(font_ui_15_bold), TextAlign::CENTER, "Available");
+          it.printf(64, 11, id(font_ui_15_bold), TextAlign::CENTER, "Firmware update");
+          it.printf(64, 28, id(font_ui_15_bold), TextAlign::CENTER, "available");
 
-          // OK button
-          it.filled_rectangle(44, 46, 60, 18);
-          it.printf(64, 44, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "INSTALL");
+          // Install button
+          const int button_width = 68;
+          it.filled_rectangle(64 - (button_width / 2), 44, button_width, 19);
+          it.printf(64, 43, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "INSTALL");
 
       # ============================================
       # OTA UPDATING PAGE
       # ============================================
-      - id: page_is_ota_updating
+      - id: page_is_updating
         lambda: |-
           it.printf(64, 2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "Updating");
 
@@ -1661,8 +1675,9 @@ display:
           it.printf(77, 16, id(font_ui_18_bold), TextAlign::TOP_CENTER, "required");
 
           // OK button
-          it.filled_rectangle(44, 46, 42, 18);
-          it.printf(64, 44, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
+          const int button_width = 42;
+          it.filled_rectangle(64 - (button_width / 2), 44, button_width, 19);
+          it.printf(64, 43, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
 
       # ============================================
       # MENU DETAIL: About
@@ -2305,7 +2320,7 @@ sensor:
           if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_ota_updating)
+              || id(main_display).get_active_page() == id(page_is_updating)
               || id(main_display).get_active_page() == id(page_update_available))
             return;
 
@@ -2372,7 +2387,7 @@ sensor:
           if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_ota_updating)
+              || id(main_display).get_active_page() == id(page_is_updating)
               || id(main_display).get_active_page() == id(page_update_available))
             return;
 
@@ -2620,9 +2635,10 @@ binary_sensor:
       - lambda: |-
           // Do nothing if still booting, on WiFi AP mode page, update (available) page or restart page
           if (!id(is_boot_complete)
+              || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
               || id(main_display).get_active_page() == id(page_is_restarting)
-              || id(main_display).get_active_page() == id(page_is_ota_updating)
+              || id(main_display).get_active_page() == id(page_is_updating)
               || id(main_display).get_active_page() == id(page_update_available))
             return;
 
@@ -2646,7 +2662,7 @@ binary_sensor:
               if (!id(is_boot_complete)
                   || id(main_display).get_active_page() == id(page_wifi_ap_mode)
                   || id(main_display).get_active_page() == id(page_is_restarting)
-                  || id(main_display).get_active_page() == id(page_is_ota_updating))
+                  || id(main_display).get_active_page() == id(page_is_updating))
                 return;
 
               if (id(ignore_next_encoder_button_press_after_wake_up))
@@ -2689,6 +2705,10 @@ binary_sensor:
                 // Update graphs and show restart confirmation
                 id(update_graph_durations).execute();
                 id(main_display).show_page(id(page_graph_duration_restart_confirm));
+
+                id(is_menu_detail_visible) = false;
+                id(is_menu_visible) = false;
+
                 return;
               }
 
@@ -2724,9 +2744,11 @@ button:
           id(return_to_last_saved_page_with_delay).stop();
 
           // Show "Restarting..." page
+          id(is_menu_detail_visible) = false;
+          id(is_menu_visible) = false;
+
           id(main_display).show_page(id(page_is_restarting));
           id(wake_display_and_reset_timer).execute();
-          id(main_display).update();
 
           // Force save preferences to flash immediately
           global_preferences->sync();
@@ -2749,9 +2771,11 @@ button:
           id(return_to_last_saved_page_with_delay).stop();
 
           // Show "Restarting..." page
+          id(is_menu_detail_visible) = false;
+          id(is_menu_visible) = false;
+
           id(main_display).show_page(id(page_is_restarting));
           id(wake_display_and_reset_timer).execute();
-          id(main_display).update();
 
           global_preferences->reset();
       - delay: 2s
@@ -2816,9 +2840,10 @@ number:
           // Do nothing if still booting, on WiFi AP mode page or restart page
           if (!id(is_boot_complete)
               || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
-              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
               || id(main_display).get_active_page() == id(page_is_restarting)
-              || id(main_display).get_active_page() == id(page_is_ota_updating))
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_is_updating)
+              || id(main_display).get_active_page() == id(page_update_available))
             return;
 
           // Save current page and switch to brightness page
