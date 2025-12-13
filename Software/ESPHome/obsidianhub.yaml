@@ -71,7 +71,7 @@ logger:
     api: WARN
 
 debug:
-  update_interval: 5s
+  update_interval: 10s
 
 ###############################################################
 # Home Assistant Integration
