@@ -497,7 +497,7 @@ font:
       weight: 650
     id: font_ui_15_bold
     size: 15
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .!°<>()0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:!°<>()0123456789\u0025"
 
   # --- Large Numbers ---
   - file:
@@ -1537,7 +1537,7 @@ display:
           const int32_t seconds = id(sleep_timeout_milliseconds) / 1000;
           if (seconds == 0)
           {
-            it.printf(64, 27, id(font_ui_15_bold), TextAlign::TOP_CENTER, "DISABLED");
+            it.printf(64, 26, id(font_ui_15_bold), TextAlign::TOP_CENTER, "DISABLED");
           }
           else if (seconds < 60)
           {
@@ -1761,8 +1761,8 @@ display:
             it.printf(127, 42, id(font6x12), TextAlign::TOP_RIGHT, "%.0f%%", id(sensor_wifi_signal_percentage).state);
 
             // MAC
-            it.printf(1, 42, id(font6x12), TextAlign::TOP_LEFT, "MAC:");
-            it.printf(64, 53, id(font6x12), TextAlign::TOP_CENTER, "%s", get_mac_address_pretty().c_str());
+            it.printf(1, 53, id(font6x12), TextAlign::TOP_LEFT, "MAC:");
+            it.printf(127, 53, id(font6x12), TextAlign::TOP_RIGHT, "%s", get_mac_address_pretty().c_str());
           }
           else
           {
