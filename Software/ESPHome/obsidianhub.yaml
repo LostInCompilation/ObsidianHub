@@ -182,7 +182,7 @@ update:
   - platform: http_request
     name: "Firmware Update (HTTP)"
     id: update_firmware_component_http
-    update_interval: 3min
+    update_interval: 30s
     device_class: "firmware"
     entity_category: "config"
     internal: true
