@@ -258,7 +258,8 @@ mqtt:
   broker: !secret mqtt_broker
   username: !secret mqtt_user
   password: !secret mqtt_password
-  port: 1883
+  #port: 1883
+  port: !secret mqtt_port
   log_topic: null
   keepalive: 8s
   publish_nan_as_none: true
@@ -901,7 +902,7 @@ interval:
     then:
       - lambda: |-
           // Constants for smooth visual fading
-          static const uint32_t BOOT_LOGO_HOLD_MS = 4000;
+          static const uint32_t BOOT_LOGO_HOLD_MS = 3800;
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.4f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
@@ -2572,18 +2573,18 @@ sensor:
   # --- HomeAssistant Brightness Sync ---
 
   # Sync brightness from Home Assistant on boot/reconnect
-  - platform: homeassistant
-    id: brightness_sync_boot
-    entity_id: light.wled_main
-    attribute: brightness
-    internal: true
-    filters:
-      #- filter_out: nan  # Ignore None/null values
-      - lambda: |-
-          // Prevent negative/invalid values
-          if (std::isnan(x) || x > 255 || x < 0)
-            return 0;
-          return x;
+  #- platform: homeassistant
+  #  id: brightness_sync_boot
+  #  entity_id: light.wled_main
+  #  attribute: brightness
+  #  internal: true
+  #  filters:
+  #    #- filter_out: nan  # Ignore None/null values
+  #    - lambda: |-
+  #        // Prevent negative/invalid values
+  #        if (std::isnan(x) || x > 255 || x < 0)
+  #          return 0;
+  #        return x;
 
 ###############################################################
 # Text Sensors
