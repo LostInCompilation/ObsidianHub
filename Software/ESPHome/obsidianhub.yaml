@@ -182,7 +182,7 @@ update:
   - platform: http_request
     name: "Firmware Update (HTTP)"
     id: update_firmware_component_http
-    update_interval: 30s
+    update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
     internal: true
@@ -248,11 +248,11 @@ wifi:
 # Captive Portal for WiFi Setup
 captive_portal:
 
-# Improv over serial as backup method
+# Improv over serial as backup WiFi setup method
 improv_serial:
 
 ###############################################################
-# MQTT Configuration (Optional)
+# MQTT Configuration
 ###############################################################
 mqtt:
   broker: !secret mqtt_broker
@@ -325,7 +325,7 @@ globals:
     restore_value: no
     initial_value: "0.0f"
 
-  # --- Boot Animation Control ---
+  # --- Initial WiFi setup done ---
   - id: wifi_has_been_setup_by_user
     type: bool
     restore_value: yes
@@ -388,7 +388,7 @@ globals:
 
   # --- Page Navigation ---
   - id: current_dashboard_page
-    type: int
+    type: uint32_t
     restore_value: no
     initial_value: "0"  # 0 = Main dashboard, 1 = Air quality dashboard, 2 = System Monitor
 
@@ -648,7 +648,7 @@ script:
           // Restore LEDs from flash memory
           id(restore_led_states_from_flash).execute();
 
-          // Resume display updates and restore full brightness
+          // Resume display updates and restore brightness
           id(main_display).start_poller();
           id(main_display).update();
           id(main_display).set_contrast(id(display_brightness));
@@ -743,7 +743,7 @@ script:
     then:
       - lambda: |-
           // Restore Status LED
-          if (id(saved_status_led_state)[4] != 0.0f)
+          if (id(saved_status_led_state)[4] > 0.0f)
           {
             auto call = id(led_status).turn_on();
             call.set_rgb(
@@ -756,7 +756,7 @@ script:
           }
 
           // Restore Key 1 LED
-          if (id(saved_key1_led_state)[4] != 0.0f)
+          if (id(saved_key1_led_state)[4] > 0.0f)
           {
             auto call = id(led_key1).turn_on();
             call.set_rgb(
@@ -769,7 +769,7 @@ script:
           }
 
           // Restore Key 2 LED
-          if (id(saved_key2_led_state)[4] != 0.0f)
+          if (id(saved_key2_led_state)[4] > 0.0f)
           {
             auto call = id(led_key2).turn_on();
             call.set_rgb(
@@ -814,12 +814,12 @@ interval:
           then:
             - animation.next_frame: animation_spinner2
 
-  # Save current LED states to flash
+  # Save current LED states to global which will be written to flash every 10min
   - interval: 500ms
     startup_delay: 5s
     then:
       - lambda: |-
-          // Don't save while on some pages
+          // Don't save while on certain pages
           if (id(main_display).get_active_page() == id(page_is_updating)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
               || id(main_display).get_active_page() == id(page_update_available))
@@ -853,7 +853,6 @@ interval:
             id(saved_key1_led_state)[4] = id(led_key1).current_values.is_on() ? 1.0f : 0.0f;
             id(saved_key2_led_state)[4] = id(led_key2).current_values.is_on() ? 1.0f : 0.0f;
           }
-
 
   # Handle WiFi AP mode detection
   # Show WiFi setup page if we loose WiFi connection for at least 1min
@@ -901,11 +900,14 @@ interval:
   - interval: 50ms
     then:
       - lambda: |-
-          // Constants for smooth visual fading
           static const uint32_t BOOT_LOGO_HOLD_MS = 3800;
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.4f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
+
+          static uint32_t fade_start = 0;
+          static uint32_t hold_start = 0;
+          static bool fade_done = false;
 
           const uint32_t now = millis();
 
@@ -914,12 +916,8 @@ interval:
           // ============================================
           if (!id(is_boot_complete))
           {
-              static uint32_t fade_start = 0;
-              static uint32_t hold_start = 0;
-              static bool fade_done = false;
-
               if (fade_start == 0)
-                fade_start = now;
+                  fade_start = now;
 
               // Fade in phase
               if (!fade_done)
@@ -928,7 +926,7 @@ interval:
                   const float progress = elapsed * INV_FADE_DURATION;
                   const float correctedValue = pow(progress, GAMMA);
 
-                  if (elapsed < FADE_DURATION_MS && correctedValue <= id(display_brightness))
+                  if (elapsed < FADE_DURATION_MS && correctedValue < id(display_brightness))
                   {
                       id(main_display).set_contrast(correctedValue);
                   }
@@ -939,60 +937,59 @@ interval:
                       id(main_display).set_contrast(id(display_brightness));
                   }
               }
-              else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase
+              else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase complete
               {
-                  // Initialize
+                  // Publish initial config values
                   id(config_display_brightness).publish_state((int)(id(display_brightness) * 100.0f));
                   id(config_auto_sleep).publish_state(id(sleep_timeout_milliseconds) / 1000);
 
                   id(is_boot_complete) = true;
                   id(last_interaction_time_ms) = now;
 
-                  // Show dashboard or WiFi setup page if not set up by user already
+                  // Show dashboard or WiFi setup page if it hasn't been set up by user already
                   if (id(wifi_has_been_setup_by_user))
                   {
-                    id(main_display).show_page(id(page_main_dashboard));
+                      id(main_display).show_page(id(page_main_dashboard));
                   }
                   else
                   {
-                    id(main_display).show_page(id(page_wifi_ap_mode));
+                      id(main_display).show_page(id(page_wifi_ap_mode));
 
-                    // Init LEDs
-                    // Status LED
-                    auto call = id(led_status).turn_on();
-                    call.set_rgb(0.0f, 0.0f, 1.0f);
-                    call.set_brightness(0.8f);
-                    call.set_effect("Blue Pulse");
-                    call.perform();
+                      // Init LEDs for WiFi setup mode
+                      auto call = id(led_status).turn_on();
+                      call.set_rgb(0.0f, 0.0f, 1.0f);
+                      call.set_brightness(0.8f);
+                      call.set_effect("Blue Pulse");
+                      call.perform();
 
-                    // Key LEDs
-                    call = id(led_key1).turn_on();
-                    call.set_rgb(1.0f, 1.0f, 0.9f);
-                    call.set_brightness(0.7f);
-                    call.perform();
+                      // Key LEDs
+                      call = id(led_key1).turn_on();
+                      call.set_rgb(1.0f, 1.0f, 0.9f);
+                      call.set_brightness(0.7f);
+                      call.perform();
 
-                    call = id(led_key2).turn_on();
-                    call.set_rgb(1.0f, 1.0f, 0.9f);
-                    call.set_brightness(0.7f);
-                    call.perform();
+                      call = id(led_key2).turn_on();
+                      call.set_rgb(1.0f, 1.0f, 0.9f);
+                      call.set_brightness(0.7f);
+                      call.perform();
                   }
               }
           }
           // ============================================
           // AUTO-SLEEP: Fade out after inactivity timeout
           // ============================================
-          else if (id(sleep_timeout_milliseconds) > 0
-                  && !id(is_display_sleeping)
-                  && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
-                  && id(main_display).get_active_page() != id(page_is_restarting)
-                  && id(main_display).get_active_page() != id(page_wifi_ap_mode)
-                  && id(main_display).get_active_page() != id(page_is_updating)
-                  && id(main_display).get_active_page() != id(page_update_available))
+          else if (id(sleep_timeout_milliseconds) > 0 && !id(is_display_sleeping))
           {
-              static uint32_t fade_start = 0;
-              uint32_t idle_time = now - id(last_interaction_time_ms);
+              // Skip auto-sleep on certain pages
+              auto page = id(main_display).get_active_page();
+              if (page == id(page_graph_duration_restart_confirm) ||
+                  page == id(page_is_restarting) ||
+                  page == id(page_wifi_ap_mode) ||
+                  page == id(page_is_updating) ||
+                  page == id(page_update_available))
+                  return;
 
-              // Check if any button is currently still being held down
+              // Check if any button is held
               const bool any_button_held = id(button_encoder).state ||
                                         id(button_left).state ||
                                         id(button_right).state;
@@ -1001,15 +998,18 @@ interval:
               if (any_button_held)
               {
                   id(last_interaction_time_ms) = now;
-                  idle_time = 0;
 
-                  // Cancel any ongoing fade out
+                  // Cancel fade out if in progress
                   if (id(is_fade_out_in_progress))
                   {
                       id(is_fade_out_in_progress) = false;
                       id(main_display).set_contrast(id(display_brightness));
                   }
+
+                  return;
               }
+
+              uint32_t idle_time = now - id(last_interaction_time_ms);
 
               // Start fade out when timeout reached
               if (idle_time >= id(sleep_timeout_milliseconds) && !id(is_fade_out_in_progress))
@@ -1018,32 +1018,32 @@ interval:
                   fade_start = now;
               }
 
+              if (!id(is_fade_out_in_progress))
+                  return;
+
               // Perform fade out
-              if (id(is_fade_out_in_progress))
+              const uint32_t elapsed = now - fade_start;
+              const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
+
+              if (elapsed < FADE_DURATION_MS)
               {
-                  const uint32_t elapsed = now - fade_start;
-                  const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
+                  const float gamma_corrected = pow(progress, GAMMA) * id(display_brightness);
+                  id(main_display).set_contrast(gamma_corrected);
+              }
+              else
+              {
+                  // Enter sleep mode
+                  id(main_display).set_contrast(0.0f);
+                  id(is_display_sleeping) = true;
+                  id(is_fade_out_in_progress) = false;
+                  id(main_display).stop_poller();
 
-                  if (elapsed < FADE_DURATION_MS && progress >= 0.0f)
+                  // Turn off LEDs if enabled
+                  if (id(switch_led_auto_sleep).state)
                   {
-                      float gamma_corrected = pow(progress, GAMMA) * id(display_brightness);
-                      id(main_display).set_contrast(gamma_corrected);
-                  }
-                  else
-                  {
-                      // Enter sleep mode
-                      id(main_display).set_contrast(0.0f);
-                      id(is_display_sleeping) = true;
-                      id(is_fade_out_in_progress) = false;
-                      id(main_display).stop_poller();
-
-                      // Turn off LEDs if enabled
-                      if (id(switch_led_auto_sleep).state)
-                      {
-                          id(led_status).turn_off().perform();
-                          id(led_key1).turn_off().perform();
-                          id(led_key2).turn_off().perform();
-                      }
+                      id(led_status).turn_off().perform();
+                      id(led_key1).turn_off().perform();
+                      id(led_key2).turn_off().perform();
                   }
               }
           }
@@ -2011,7 +2011,7 @@ graphical_display_menu:
               return buf;
             }
 
-            // Scroll every 50ms for smooth animation (adjust as needed)
+            // Scroll every 50ms for smooth animation
             if (millis() - last_scroll > 50)
             {
               last_scroll = millis();
@@ -2257,7 +2257,7 @@ sensor:
     name: "WiFi Signal"
     id: sensor_wifi_signal
     entity_category: "diagnostic"
-    update_interval: 2s
+    update_interval: 10s
 
   - platform: copy
     source_id: sensor_wifi_signal
@@ -2476,7 +2476,7 @@ sensor:
   - platform: mqtt_subscribe
     name: "CPU Usage"
     id: mqtt_cpu_percent
-    topic: "obsidianhub/pc/cpu"
+    topic: "obsidianhub/system_monitor/cpu"
     unit_of_measurement: "%"
     accuracy_decimals: 1
     internal: true
@@ -2489,21 +2489,21 @@ sensor:
   - platform: mqtt_subscribe
     name: "RAM Percent"
     id: mqtt_ram_percent
-    topic: "obsidianhub/pc/ram/percent"
+    topic: "obsidianhub/system_monitor/ram/percent"
     unit_of_measurement: "%"
     accuracy_decimals: 1
     internal: true
   #- platform: mqtt_subscribe
   #  name: "RAM Used"
   #  id: mqtt_ram_used
-  #  topic: "obsidianhub/pc/ram/used"
+  #  topic: "obsidianhub/system_monitor/ram/used"
   #  unit_of_measurement: "GB"
   #  accuracy_decimals: 2
   #  internal: true
   #- platform: mqtt_subscribe
   #  name: "RAM Total"
   #  id: mqtt_ram_total
-  #  topic: "obsidianhub/pc/ram/total"
+  #  topic: "obsidianhub/system_monitor/ram/total"
   #  unit_of_measurement: "GB"
   #  accuracy_decimals: 2
   #  internal: true
@@ -2512,28 +2512,28 @@ sensor:
   #- platform: mqtt_subscribe
   #  name: "Disk Percent"
   #  id: mqtt_disk_percent
-  #  topic: "obsidianhub/pc/disk/percent"
+  #  topic: "obsidianhub/system_monitor/disk/percent"
   #  unit_of_measurement: "%"
   #  accuracy_decimals: 1
   #  internal: true
   #- platform: mqtt_subscribe
   #  name: "Disk Used"
   #  id: mqtt_disk_used
-  #  topic: "obsidianhub/pc/disk/used"
+  #  topic: "obsidianhub/system_monitor/disk/used"
   #  unit_of_measurement: "GB"
   #  accuracy_decimals: 2
   #  internal: true
   #- platform: mqtt_subscribe
   #  name: "Disk Free"
   #  id: mqtt_disk_free
-  #  topic: "obsidianhub/pc/disk/free"
+  #  topic: "obsidianhub/system_monitor/disk/free"
   #  unit_of_measurement: "GB"
   #  accuracy_decimals: 2
   #  internal: true
   #- platform: mqtt_subscribe
   #  name: "Disk Total"
   #  id: mqtt_disk_total
-  #  topic: "obsidianhub/pc/disk/total"
+  #  topic: "obsidianhub/system_monitor/disk/total"
   #  unit_of_measurement: "GB"
   #  accuracy_decimals: 2
   #  internal: true
@@ -2542,14 +2542,14 @@ sensor:
   - platform: mqtt_subscribe
     name: "Disk Read"
     id: mqtt_disk_read
-    topic: "obsidianhub/pc/disk/read"
+    topic: "obsidianhub/system_monitor/disk/read"
     unit_of_measurement: "MB"
     accuracy_decimals: 2
     internal: true
   - platform: mqtt_subscribe
     name: "Disk Write"
     id: mqtt_disk_write
-    topic: "obsidianhub/pc/disk/write"
+    topic: "obsidianhub/system_monitor/disk/write"
     unit_of_measurement: "MB"
     accuracy_decimals: 2
     internal: true
@@ -2558,14 +2558,14 @@ sensor:
   - platform: mqtt_subscribe
     name: "Network Download"
     id: mqtt_net_recv
-    topic: "obsidianhub/pc/net/recv"
+    topic: "obsidianhub/system_monitor/net/recv"
     unit_of_measurement: "MB/s"
     accuracy_decimals: 2
     internal: true
   - platform: mqtt_subscribe
     name: "Network Upload"
     id: mqtt_net_sent
-    topic: "obsidianhub/pc/net/sent"
+    topic: "obsidianhub/system_monitor/net/sent"
     unit_of_measurement: "MB/s"
     accuracy_decimals: 2
     internal: true
