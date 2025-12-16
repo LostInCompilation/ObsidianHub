@@ -52,7 +52,7 @@ esphome:
   on_boot:
     priority: -100
     then:
-      - script.execute: restore_led_states_from_flash
+      - script.execute: restore_led_states
       - script.execute: update_graph_durations
       - lambda: |- # Debug
           id(mqtt_component).set_broker_address("192.168.0.103");
@@ -95,26 +95,26 @@ api:
   encryption:
     key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
 
-  on_client_connected:
-    # Debug
-    #- delay: 500ms
-    - lambda: |-
-        /*ESP_LOGI("brightness", "HA connected — performing brightness sync");
+  # on_client_connected:
+  #   # Debug
+  #   - delay: 500ms
+  #   - lambda: |-
+  #       ESP_LOGI("brightness", "HA connected — performing brightness sync");
 
-        id(brightness_sync_boot).call();
+  #       id(brightness_sync_boot).call();
 
-        if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
-        {
-          ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
-          return;
-        }
+  #       if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
+  #       {
+  #         ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
+  #         return;
+  #       }
 
-        float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
-        uint32_t pct = clamp((int)lround(tmp), 0, 100);
+  #       float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
+  #       uint32_t pct = clamp((int)lround(tmp), 0, 100);
 
-        ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
+  #       ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
 
-        id(brightness_control).publish_state(pct);*/
+  #       id(brightness_control).publish_state(pct);
 
 ###############################################################
 # HTTP Requests
@@ -122,7 +122,7 @@ api:
 http_request:
   follow_redirects: true
   redirect_limit: 3
-  buffer_size_rx: 2048
+  buffer_size_rx: 3072
   buffer_size_tx: 512
   timeout: 5s
   watchdog_timeout: 6s
@@ -132,7 +132,7 @@ http_request:
 # Over-The-Air Firmware Updates
 ###############################################################
 ota:
-  # HTTP (managed)
+  # HTTP Updates (managed)
   - platform: http_request
     id: ota_component_http
     on_begin:
@@ -194,11 +194,12 @@ ota:
 # Update component
 update:
   - platform: http_request
-    name: "Firmware Update (HTTP)"
+    name: "Firmware Update"
     id: update_firmware_component_http
     update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
+    icon: mdi:package
     #internal: true
     source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
     on_update_available:
@@ -206,6 +207,7 @@ update:
         - lambda: |-
             id(return_to_last_saved_page_with_delay).stop();
 
+            // Show update available page
             id(is_menu_detail_visible) = false;
             id(is_menu_visible) = false;
 
@@ -274,7 +276,7 @@ mqtt:
   username: !secret mqtt_user
   password: !secret mqtt_password
   log_topic: null
-  keepalive: 8s
+  keepalive: 10s
   publish_nan_as_none: true
   id: mqtt_component
   client_id: obsidianhub
@@ -290,7 +292,7 @@ mqtt:
 time:
   - platform: sntp
     id: sntp_time
-    update_interval: 1h
+    update_interval: 6h
     timezone: Europe/Berlin
     servers:
      - 0.pool.ntp.org
@@ -406,9 +408,9 @@ globals:
 
   # --- Page Navigation ---
   - id: current_dashboard_page
-    type: uint32_t
+    type: uint8_t
     restore_value: no
-    initial_value: "0"  # 0 = Main dashboard, 1 = Air quality dashboard, 2 = System Monitor
+    initial_value: "0"  # 0 = Main dashboard, 1 = Air quality dashboard, 2 = System Monitor, 3 = Weather
 
   - id: last_saved_page
     type: esphome::display::DisplayPage*
@@ -530,7 +532,7 @@ font:
       weight: 650
     id: font_ui_15_bold
     size: 15
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:!°<>()0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:!°<>()-0123456789\u0025"
 
   # --- Large Numbers ---
   - file:
@@ -677,8 +679,7 @@ script:
           if (!id(is_display_sleeping) && !id(is_led_sleeping) && !id(is_fade_out_in_progress))
             return;
 
-          // Restore LEDs from flash memory
-          id(restore_led_states_from_flash).execute();
+          id(restore_led_states).execute();
 
           // Resume display updates and restore brightness
           id(main_display).start_poller();
@@ -773,8 +774,8 @@ script:
           id(graph_tvoc).reset_to_construction_state();
           id(graph_tvoc).setup();
 
-  # Restore LED states from flash memory
-  - id: restore_led_states_from_flash
+  # Restore LED states
+  - id: restore_led_states
     then:
       - lambda: |-
           // Restore Status LED
@@ -819,154 +820,128 @@ script:
   # Get location from IP
   - id: fetch_location
     then:
+      - lambda: |-
+          ESP_LOGI("fetch_location", "FETCH LOCATION CALLED");
       - http_request.get:
           url: "http://ip-api.com/json/?fields=lat,lon"
           capture_response: true
-          max_response_buffer_size: 128
+          max_response_buffer_size: 64
           request_headers:
             Content-Type: application/json
           on_response:
             then:
               - lambda: |-
-                  if (response->status_code == 200 && body.length() > 0)
+                  if (response->status_code != 200 || body.length() == 0)
                   {
-                    ESP_LOGI("fetch_location", "Body: %s", body.c_str());
+                    ESP_LOGE("fetch_location", "Could not fetch location. Bad response or empty body. Response status: %d", response->status_code);
+                    return;
+                  }
 
-                    json::parse_json(body, [](JsonObject root) -> bool
+                  json::parse_json(body, [](JsonObject root) -> bool {
+                    if (!root.containsKey("lat") || !root.containsKey("lon"))
                     {
-                      if (root.containsKey("lat") && root.containsKey("lon"))
-                      {
-                        float lat = root["lat"];
-                        float lon = root["lon"];
-                        id(latitude) = lat;
-                        id(longitude) = lon;
-                        id(location_fetched) = true;
-
-                        ESP_LOGI("fetch_location", "Location detected: %.4f, %.4f", lat, lon);
-
-                        return true;
-                      }
-
-                      ESP_LOGE("fetch_location", "Missing lat/lon in response");
-
+                      ESP_LOGE("fetch_location", "Missing latitude/longitude in response");
                       return false;
-                    });
-                  }
-                  else
-                  {
-                    ESP_LOGE("fetch_location", "Bad response or empty body. Response status: %d", response->status_code);
-                  }
+                    }
+
+                    id(latitude) = root["lat"];
+                    id(longitude) = root["lon"];
+                    id(location_fetched) = true;
+
+                    ESP_LOGI("fetch_location", "Location detected: %.4f, %.4f", id(latitude), id(longitude));
+
+                    return true;
+                  });
           on_error:
             then:
-              - logger.log: "Could not request location - using default coordinates (Berlin, Germany)"
+              - lambda: |-
+                  ESP_LOGE("fetch_location", "Could not fetch location");
 
   # Fetch Weather Data
   - id: fetch_weather
     then:
+      - lambda: |-
+          ESP_LOGI("fetch_weather", "FETCH WEATHER CALLED");
       - http_request.get:
           url: !lambda |-
-            char url[200];
+            char url[128];
             snprintf(url, sizeof(url),
                      "https://api.brightsky.dev/current_weather?lat=%.4f&lon=%.4f",
                      id(latitude), id(longitude));
-
-            ESP_LOGI("weather", "Fetching weather from: %s", url);
-
             return std::string(url);
           capture_response: true
-          max_response_buffer_size: 2048
+          max_response_buffer_size: 3072
           request_headers:
             Content-Type: application/json
           on_response:
             then:
-              - if:
-                  condition:
-                    lambda: return response->status_code == 200;
-                  then:
-                    - lambda: |-
-                        ESP_LOGI("fetch_weather", "Response received, body length: %d", body.length());
+              - lambda: |-
+                  if (response->status_code != 200 || body.length() == 0)
+                  {
+                    ESP_LOGE("fetch_weather", "Could not fetch weather data. Bad response or empty body. Response status: %d", response->status_code);
+                    return;
+                  }
 
-                        if (body.length() == 0)
-                        {
-                          ESP_LOGE("fetch_weather", "Empty response body!");
-                          return;
-                        }
+                  json::parse_json(body, [](JsonObject root) -> bool {
+                    if (!root.containsKey("weather"))
+                    {
+                      ESP_LOGE("fetch_weather", "No 'weather' key in JSON");
+                      return false;
+                    }
 
-                        json::parse_json(body, [](JsonObject root) -> bool
-                        {
-                          // Bright Sky JSON structure
-                          if (!root.containsKey("weather"))
-                          {
-                            ESP_LOGE("fetch_weather", "No 'weather' key in JSON");
-                            return false;
-                          }
+                    JsonObject weather = root["weather"];
 
-                          JsonObject weather = root["weather"];
+                    // Parse temperature
+                    if (weather.containsKey("temperature"))
+                    {
+                      float temp = weather["temperature"];
+                      id(weather_temperature).publish_state(temp);
+                    }
 
-                          // Parse temperature
-                          if (weather.containsKey("temperature"))
-                          {
-                            float temp = weather["temperature"];
-                            id(weather_temperature).publish_state(temp);
-                            ESP_LOGI("fetch_weather", "Temperature: %.1f°C", temp);
-                          }
+                    // Parse humidity
+                    if (weather.containsKey("relative_humidity"))
+                    {
+                      float humid = weather["relative_humidity"];
+                      id(weather_humidity).publish_state(humid);
+                    }
 
-                          // Parse humidity
-                          if (weather.containsKey("relative_humidity"))
-                          {
-                            float humid = weather["relative_humidity"];
-                            id(weather_humidity).publish_state(humid);
-                            ESP_LOGI("fetch_weather", "Humidity: %.0f%%", humid);
-                          }
+                    // Parse wind speed
+                    if (weather.containsKey("wind_speed"))
+                    {
+                      float wind_ms = weather["wind_speed"];
+                      float wind_kmh = wind_ms * 3.6f;
+                      id(weather_wind_speed).publish_state(wind_kmh);
+                    }
 
-                          // Parse wind speed (convert m/s to km/h)
-                          if (weather.containsKey("wind_speed"))
-                          {
-                            float wind_ms = weather["wind_speed"];
-                            float wind_kmh = wind_ms * 3.6;
-                            id(weather_wind_speed).publish_state(wind_kmh);
-                            ESP_LOGI("fetch_weather", "Wind: %.1f km/h", wind_kmh);
-                          }
+                    // Parse weather condition
+                    if (weather.containsKey("condition"))
+                    {
+                      std::string cond_str = weather["condition"];
 
-                          // Parse condition
-                          if (weather.containsKey("condition"))
-                          {
-                            const char* condition = weather["condition"];
-                            std::string cond_str = condition;
+                      if (cond_str == "dry")
+                        id(weather_condition).publish_state("Clear");
+                      else if (cond_str == "fog")
+                        id(weather_condition).publish_state("Foggy");
+                      else if (cond_str == "rain")
+                        id(weather_condition).publish_state("Rain");
+                      else if (cond_str == "sleet")
+                        id(weather_condition).publish_state("Sleet");
+                      else if (cond_str == "snow")
+                        id(weather_condition).publish_state("Snow");
+                      else if (cond_str == "hail")
+                        id(weather_condition).publish_state("Hail");
+                      else if (cond_str == "thunderstorm")
+                        id(weather_condition).publish_state("Storm");
+                      else
+                        id(weather_condition).publish_state("Cloudy");
+                    }
 
-                            // Convert condition to readable text
-                            if (cond_str == "dry") {
-                              id(weather_condition).publish_state("Clear");
-                            } else if (cond_str == "fog") {
-                              id(weather_condition).publish_state("Foggy");
-                            } else if (cond_str == "rain") {
-                              id(weather_condition).publish_state("Rain");
-                            } else if (cond_str == "sleet") {
-                              id(weather_condition).publish_state("Sleet");
-                            } else if (cond_str == "snow") {
-                              id(weather_condition).publish_state("Snow");
-                            } else if (cond_str == "hail") {
-                              id(weather_condition).publish_state("Hail");
-                            } else if (cond_str == "thunderstorm") {
-                              id(weather_condition).publish_state("Storm");
-                            } else {
-                              id(weather_condition).publish_state("Cloudy");
-                            }
-
-                            ESP_LOGI("fetch_weather", "Condition: %s", condition);
-                          }
-
-                          ESP_LOGI("fetch_weather", "Weather data updated successfully");
-                          return true;
-                        });
-                  else:
-                    - logger.log:
-                        format: "HTTP Request failed, status: %d"
-                        args: ['response->status_code']
+                    return true;
+                  });
           on_error:
             then:
-              - logger.log: "HTTP Request error - connection failed"
-
+              - lambda: |-
+                  ESP_LOGE("fetch_weather", "Could not fetch weather data");
 
 ###############################################################
 # Intervals (Periodic Tasks)
@@ -1001,12 +976,31 @@ interval:
           then:
             - animation.next_frame: animation_spinner2
 
-    # Update Weather Data
-  #- interval: 2min
-  #  then:
-  #    - script.execute: fetch_weather
+  # Fetch location
+  - interval: 30s
+    startup_delay: 10s
+    then:
+      - if:
+          condition:
+            lambda: "return !id(location_fetched);"
+          then:
+            - lambda: |-
+                static uint8_t attempt = 0;
 
-  # Save current LED states to global which will be written to flash every 10min
+                if (attempt < 10 && !id(location_fetched))
+                {
+                  // Try to fetch location
+                  id(fetch_location).execute();
+                  attempt++;
+                }
+
+  # Update Weather Data
+  - interval: 10min
+    startup_delay: 60s
+    then:
+      - script.execute: fetch_weather
+
+  # Save current LED states to global which will be written to flash automatically
   - interval: 500ms
     startup_delay: 5s
     then:
@@ -1094,7 +1088,7 @@ interval:
       - lambda: |-
           static const uint32_t BOOT_LOGO_HOLD_MS = 3800;
           static const uint32_t FADE_DURATION_MS = 700;
-          static const float GAMMA = 2.4f;  // Human eye perception correction
+          static const float GAMMA = 2.5f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
 
           static uint32_t fade_start = 0;
@@ -1597,19 +1591,17 @@ display:
             // Humidity and Wind
             if (id(weather_humidity).has_state())
             {
-              it.printf(0, 45, id(font6x12), "Humid: %.0f%%", id(weather_humidity).state);
+              it.printf(0, 44, id(font6x12), TextAlign::TOP_LEFT, "Humidity: %.0f%%", id(weather_humidity).state);
             }
             if (id(weather_wind_speed).has_state())
             {
-              it.printf(0, 56, id(font6x12), "Wind: %.1f km/h", id(weather_wind_speed).state);
+              it.printf(0, 56, id(font6x12), TextAlign::TOP_LEFT, "Wind Speed: %.1f km/h", id(weather_wind_speed).state);
             }
           }
           else
           {
             it.printf(64, 32, id(font7x13), TextAlign::CENTER, "Loading...");
           }
-
-
 
       # ============================================
       # BRIGHTNESS CONTROL: Shows percentage with progress bar
@@ -2401,7 +2393,7 @@ light:
     chipset: SK6812
     max_refresh_rate: 12ms
     restore_mode: ALWAYS_OFF
-    gamma_correct: 2.4
+    gamma_correct: 2.5
     default_transition_length: 600ms
     internal: true
     effects:
@@ -2527,7 +2519,7 @@ sensor:
   # BMP280: Atmospheric pressure
   - platform: bmp280_i2c
     address: 0x77
-    update_interval: 10s
+    update_interval: 15s
     iir_filter: 4x
     pressure:
       name: "Atmospheric Pressure"
@@ -2905,12 +2897,6 @@ binary_sensor:
     on_press:
       - script.execute: wake_display_and_reset_timer
 
-      # Debug
-      - script.execute: fetch_location
-      #- script.wait: fetch_location
-      #- script.execute: fetch_weather
-      #- script.wait: fetch_weather
-
   # Right tactile button
   - platform: gpio
     pin:
@@ -2955,8 +2941,8 @@ binary_sensor:
           id(wake_display_and_reset_timer).execute();
           id(check_for_long_press).stop();
           id(check_for_long_press).execute();
+    # Short press (button released again)
     on_click:
-      # Short press (button released again)
       - min_length: 2ms
         max_length: 599ms
         then:
@@ -3152,7 +3138,7 @@ number:
           // This runs whenever the value changes (from encoder or from Home Assistant)
           id(brightness_control).publish_state(x);
 
-          // Do nothing if still booting, on WiFi AP mode page or restart page
+          // Do nothing if still booting or on certain pages
           if (!id(is_boot_complete)
               || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
