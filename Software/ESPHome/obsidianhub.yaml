@@ -196,11 +196,12 @@ update:
   - platform: http_request
     name: "Firmware Update"
     id: update_firmware_component_http
-    update_interval: 120min
+    update_interval: 1min
     device_class: "firmware"
     entity_category: "config"
     internal: true
-    source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
+    #source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
+    source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest_test.json"
     on_update_available:
       then:
         - lambda: |-
@@ -425,6 +426,12 @@ globals:
     type: bool
     restore_value: no
     initial_value: "false"
+
+  # --- Selected Button on Update Available Page ---
+  - id: update_available_page_selected_button
+    type: uint8_t
+    restore_value: no
+    initial_value: "0"  # 0 = Install, 1 = Later
 
   # --- PC Monitor Connection Tracking ---
   - id: system_monitor_mqtt_last_update
@@ -976,28 +983,40 @@ interval:
             - animation.next_frame: animation_spinner2
 
   # Fetch location
-  - interval: 30s
-    startup_delay: 10s
+  - interval: 10s
+    startup_delay: 15s
     then:
       - if:
           condition:
-            lambda: "return !id(location_fetched);"
+            lambda: "return !id(location_fetched) && id(wifi_component).is_connected() && id(wifi_has_been_setup_by_user);"
           then:
             - lambda: |-
+                const uint8_t MAX_RETRIES = 20;
                 static uint8_t attempt = 0;
 
-                if (attempt < 10 && !id(location_fetched))
+                if (attempt < MAX_RETRIES && !id(location_fetched))
                 {
                   // Try to fetch location
                   id(fetch_location).execute();
                   attempt++;
+                }
+                else if (attempt >= MAX_RETRIES && attempt != 0xFF)
+                {
+                  ESP_LOGW("fetch_location", "Fetching location failed %d times. Fallback to default location (Berlin, Germany)", MAX_RETRIES);
+
+                  // Prevent printing this message again (end state)
+                  attempt = 0xFF;
                 }
 
   # Update Weather Data
   - interval: 10min
     startup_delay: 60s
     then:
-      - script.execute: fetch_weather
+      - if:
+          condition:
+            lambda: "return id(wifi_component).is_connected() && id(wifi_has_been_setup_by_user);"
+          then:
+            - script.execute: fetch_weather
 
   # Save current LED states to global which will be written to flash automatically
   - interval: 500ms
@@ -1057,7 +1076,7 @@ interval:
               id(wake_display_and_reset_timer).execute();
               id(return_to_last_saved_page_with_delay).stop();
 
-              // Show AP page and do nothing
+              // Show AP page
               id(is_menu_detail_visible) = false;
               id(is_menu_visible) = false;
               id(main_display).show_page(id(page_wifi_ap_mode));
@@ -1134,7 +1153,11 @@ interval:
                   // Show dashboard or WiFi setup page if it hasn't been set up by user already
                   if (id(wifi_has_been_setup_by_user))
                   {
-                      id(main_display).show_page(id(page_main_dashboard));
+                      //id(main_display).show_page(id(page_main_dashboard));
+
+                      // ---------- DEBUG -----------
+                      // Show update available page
+                      id(main_display).show_page(id(page_update_available));
                   }
                   else
                   {
@@ -2575,8 +2598,7 @@ sensor:
           if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_updating)
-              || id(main_display).get_active_page() == id(page_update_available))
+              || id(main_display).get_active_page() == id(page_is_updating))
             return;
 
           if (id(is_menu_visible))
@@ -2614,6 +2636,11 @@ sensor:
             int new_val = min(current + step, 1440);
             id(graph_duration_minutes) = new_val;
           }
+          else if (id(main_display).get_active_page() == id(page_update_available))
+          {
+            // Select button on update available page
+            id(update_available_page_selected_button) = (id(update_available_page_selected_button) + 1) % 2;
+          }
           else
           {
             // Brightness adjustment (2% steps)
@@ -2642,8 +2669,7 @@ sensor:
           if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_updating)
-              || id(main_display).get_active_page() == id(page_update_available))
+              || id(main_display).get_active_page() == id(page_is_updating))
             return;
 
           if (id(is_menu_visible))
@@ -2680,6 +2706,11 @@ sensor:
 
             int new_val = max(current - step, 1);
             id(graph_duration_minutes) = new_val;
+          }
+          else if (id(main_display).get_active_page() == id(page_update_available))
+          {
+            // Select button on update available page
+            id(update_available_page_selected_button) = (id(update_available_page_selected_button) + 1) % 2;
           }
           else
           {
@@ -2943,12 +2974,12 @@ binary_sensor:
     # Short press (button released again)
     on_click:
       - min_length: 2ms
-        max_length: 599ms
+        max_length: 800ms
         then:
           - lambda: |-
               id(check_for_long_press).stop();
 
-              // Do nothing if still booting, on WiFi AP mode page, update page or restart page
+              // Do nothing if still booting, on WiFi AP mode page, updating page or restarting page
               if (!id(is_boot_complete)
                   || id(main_display).get_active_page() == id(page_wifi_ap_mode)
                   || id(main_display).get_active_page() == id(page_is_restarting)
@@ -2965,16 +2996,14 @@ binary_sensor:
               // Stop script in case we are on brightness page with automatic return to last saved page
               id(return_to_last_saved_page_with_delay).stop();
 
-              // Handle update available page
+              // Handle pages
               if (id(main_display).get_active_page() == id(page_update_available))
               {
                 // Install update
                 id(update_firmware_component_http).perform(true);
                 return;
               }
-
-              // Handle restart confirmation page - restart device immediately
-              if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm))
+              else if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm))
               {
                 // Show "Restarting..." page
                 id(main_display).show_page(id(page_is_restarting));
