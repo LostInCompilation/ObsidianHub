@@ -1,13 +1,11 @@
 .DS_Store
 fp-info-cache*
 *.lck
-*.FCBak
 *.kicad_prl
 
 PCB/ObsidianHub-backups
 
 Misc/
 
-Software/System*monitor
 Software/ESPHome/Commands.txt
 User*Manual/
