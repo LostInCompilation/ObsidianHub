@@ -199,8 +199,7 @@ update:
     update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
-    icon: mdi:package
-    #internal: true
+    internal: true
     source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
     on_update_available:
       then:
