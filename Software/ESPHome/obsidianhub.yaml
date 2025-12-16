@@ -844,7 +844,7 @@ script:
                   }
 
                   json::parse_json(body, [](JsonObject root) -> bool {
-                    if (!root.containsKey("lat") || !root.containsKey("lon"))
+                    if (!root["lat"].is<float>() || !root["lon"].is<float>())
                     {
                       ESP_LOGE("fetch_location", "Missing latitude/longitude in response");
                       return false;
@@ -889,7 +889,7 @@ script:
                   }
 
                   json::parse_json(body, [](JsonObject root) -> bool {
-                    if (!root.containsKey("weather"))
+                    if (!root["weather"].is<JsonObject>())
                     {
                       ESP_LOGE("fetch_weather", "No 'weather' key in JSON");
                       return false;
@@ -898,21 +898,15 @@ script:
                     JsonObject weather = root["weather"];
 
                     // Parse temperature
-                    if (weather.containsKey("temperature"))
-                    {
-                      float temp = weather["temperature"];
-                      id(weather_temperature).publish_state(temp);
-                    }
+                    if (weather["temperature"].is<float>())
+                      id(weather_temperature).publish_state(weather["temperature"]);
 
                     // Parse humidity
-                    if (weather.containsKey("relative_humidity"))
-                    {
-                      float humid = weather["relative_humidity"];
-                      id(weather_humidity).publish_state(humid);
-                    }
+                    if (weather["relative_humidity"].is<float>())
+                      id(weather_humidity).publish_state(weather["relative_humidity"]);
 
                     // Parse wind speed
-                    if (weather.containsKey("wind_speed"))
+                    if (weather["wind_speed"].is<float>())
                     {
                       float wind_ms = weather["wind_speed"];
                       float wind_kmh = wind_ms * 3.6f;
@@ -920,7 +914,7 @@ script:
                     }
 
                     // Parse weather condition
-                    if (weather.containsKey("condition"))
+                    if (weather["condition"].is<const char*>())
                     {
                       std::string cond_str = weather["condition"];
 
@@ -1310,7 +1304,7 @@ display:
 
           const int button_width = 58;
           const int button_height = 19;
-          const int button_spacing = 7;
+          const int button_spacing = 8;
           const int button_y = 43;
           const int button_text_offset = 3;
 
