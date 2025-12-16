@@ -28,6 +28,9 @@ substitutions:
   fallback_latitude: "52.5174"  # Defaults to Berlin/Germany
   fallback_longitude: "13.3951"
 
+  # API Key for OpenWeatherMap
+  openweathermap_api_key: !secret openweathermap_api_key
+
 ###############################################################
 # Dashboard Import for easy ESPHome Device Builder usage
 ###############################################################
@@ -559,6 +562,11 @@ font:
     size: 21
     glyphs: "ObsidanHuNo WF"
 
+  # --- Weather Icons ---
+  - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/WeatherIcons.ttf"
+    id: font_weather_icons
+    size: 20
+
 ###############################################################
 # Images and Icons
 ###############################################################
@@ -826,8 +834,6 @@ script:
   # Get location from IP
   - id: fetch_location
     then:
-      - lambda: |-
-          ESP_LOGI("fetch_location", "FETCH LOCATION CALLED");
       - http_request.get:
           url: "http://ip-api.com/json/?fields=lat,lon"
           capture_response: true
@@ -866,14 +872,12 @@ script:
   # Fetch Weather Data
   - id: fetch_weather
     then:
-      - lambda: |-
-          ESP_LOGI("fetch_weather", "FETCH WEATHER CALLED");
       - http_request.get:
           url: !lambda |-
-            char url[128];
+            char url[256];
             snprintf(url, sizeof(url),
-                     "https://api.brightsky.dev/current_weather?lat=%.4f&lon=%.4f",
-                     id(latitude), id(longitude));
+                    "https://api.openweathermap.org/data/2.5/weather?lat=%.4f&lon=%.4f&appid=${openweathermap_api_key}&units=metric",
+                    id(latitude), id(longitude));
             return std::string(url);
           capture_response: true
           max_response_buffer_size: 3072
@@ -884,64 +888,52 @@ script:
               - lambda: |-
                   if (response->status_code != 200 || body.length() == 0)
                   {
-                    ESP_LOGE("fetch_weather", "Could not fetch weather data. Bad response or empty body. Response status: %d", response->status_code);
+                    ESP_LOGE("fetch_weather", "Could not fetch weather data. Response status: %d", response->status_code);
                     return;
                   }
-
                   json::parse_json(body, [](JsonObject root) -> bool {
-                    if (!root["weather"].is<JsonObject>())
-                    {
-                      ESP_LOGE("fetch_weather", "No 'weather' key in JSON");
-                      return false;
-                    }
-
-                    JsonObject weather = root["weather"];
-
-                    // Parse temperature
-                    if (weather["temperature"].is<float>())
-                      id(weather_temperature).publish_state(weather["temperature"]);
+                    // Parse temperature (already in Celsius with units=metric)
+                    if (root["main"]["temp"].is<float>())
+                      id(weather_temperature).publish_state(root["main"]["temp"]);
 
                     // Parse humidity
-                    if (weather["relative_humidity"].is<float>())
-                      id(weather_humidity).publish_state(weather["relative_humidity"]);
+                    if (root["main"]["humidity"].is<int>())
+                      id(weather_humidity).publish_state(root["main"]["humidity"]);
 
-                    // Parse wind speed
-                    if (weather["wind_speed"].is<float>())
+                    // Parse wind speed (m/s by default, convert to km/h)
+                    if (root["wind"]["speed"].is<float>())
                     {
-                      float wind_ms = weather["wind_speed"];
+                      float wind_ms = root["wind"]["speed"];
                       float wind_kmh = wind_ms * 3.6f;
                       id(weather_wind_speed).publish_state(wind_kmh);
                     }
 
-                    // Parse weather condition
-                    if (weather["condition"].is<const char*>())
+                    // Parse weather condition and icon code
+                    if (root["weather"][0].is<JsonObject>())
                     {
-                      std::string cond_str = weather["condition"];
+                      JsonObject weather = root["weather"][0];
 
-                      if (cond_str == "dry")
-                        id(weather_condition).publish_state("Clear");
-                      else if (cond_str == "fog")
-                        id(weather_condition).publish_state("Foggy");
-                      else if (cond_str == "rain")
-                        id(weather_condition).publish_state("Rain");
-                      else if (cond_str == "sleet")
-                        id(weather_condition).publish_state("Sleet");
-                      else if (cond_str == "snow")
-                        id(weather_condition).publish_state("Snow");
-                      else if (cond_str == "hail")
-                        id(weather_condition).publish_state("Hail");
-                      else if (cond_str == "thunderstorm")
-                        id(weather_condition).publish_state("Storm");
-                      else
-                        id(weather_condition).publish_state("Cloudy");
+                      // Get icon code (e.g., "01d", "10n", etc.)
+                      if (weather["icon"].is<const char*>())
+                      {
+                        std::string icon_code = weather["icon"];
+                        id(weather_icon).publish_state(icon_code.c_str());
+                      }
+
+                      // Get description (e.g., "clear sky", "light rain")
+                      if (weather["description"].is<const char*>())
+                      {
+                        id(weather_condition).publish_state(weather["description"]);
+                      }
                     }
 
+                    ESP_LOGI("fetch_weather", "Weather data updated successfully");
                     return true;
                   });
           on_error:
             then:
               - lambda: |-
-                  ESP_LOGE("fetch_weather", "Could not fetch weather data");
+                  ESP_LOGE("fetch_weather", "HTTP request failed");
 
 ###############################################################
 # Intervals (Periodic Tasks)
@@ -2926,10 +2918,15 @@ text_sensor:
           default: return {"Not Available"};
       }
 
-  # Weather Condition Text
+  # Weather
   - platform: template
     name: "Weather Condition"
     id: weather_condition
+    internal: true
+
+  - platform: template
+    name: "Weather Icon"
+    id: weather_icon
     internal: true
 
 ###############################################################
@@ -2961,6 +2958,8 @@ binary_sensor:
       - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
+      - lambda: |- # Debug
+          id(update_firmware_component_http).check();
 
   # Rotary encoder push button
   - platform: gpio
@@ -3032,6 +3031,12 @@ binary_sensor:
                   id(is_menu_detail_visible) = false;
                   id(is_menu_visible) = false;
                   id(return_to_current_dashboard).execute();
+
+                  // Restore LEDs
+                  auto call = id(led_status).make_call();
+                  call.set_effect("None");
+                  call.perform();
+                  id(restore_led_states).execute();
 
                   id(update_available_page_selected_button) = 0;
                 }
