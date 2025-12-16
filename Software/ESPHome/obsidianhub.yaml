@@ -1147,11 +1147,7 @@ interval:
                   // Show dashboard or WiFi setup page if it hasn't been set up by user already
                   if (id(wifi_has_been_setup_by_user))
                   {
-                      //id(main_display).show_page(id(page_main_dashboard));
-
-                      // ---------- DEBUG -----------
-                      // Show update available page
-                      id(main_display).show_page(id(page_update_available));
+                      id(main_display).show_page(id(page_main_dashboard));
                   }
                   else
                   {
@@ -3032,8 +3028,6 @@ binary_sensor:
                 }
                 else
                 {
-                  //id(main_display).show_page(id(page_));
-
                   // Later button pressed - return to current dashboard
                   id(is_menu_detail_visible) = false;
                   id(is_menu_visible) = false;
