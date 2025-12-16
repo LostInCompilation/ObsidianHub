@@ -125,7 +125,7 @@ api:
 http_request:
   follow_redirects: true
   redirect_limit: 3
-  buffer_size_rx: 3072
+  buffer_size_rx: 2048
   buffer_size_tx: 512
   timeout: 5s
   watchdog_timeout: 6s
@@ -413,7 +413,7 @@ globals:
   - id: current_dashboard_page
     type: uint8_t
     restore_value: no
-    initial_value: "0"  # 0 = Main dashboard, 1 = Air quality dashboard, 2 = System Monitor, 3 = Weather
+    initial_value: "0"  # 0 = Main dashboard, 1 = Air quality dashboard, 2 = Weather dashboard, 3 = System monitor
 
   - id: last_saved_page
     type: esphome::display::DisplayPage*
@@ -456,6 +456,11 @@ globals:
     restore_value: no
     initial_value: "false"
 
+  # --- Parsed Weather JSON ---
+  - id: weather_json_doc
+    type: JsonDocument
+    restore_value: no
+
   # --- LED State Persistence (survives reboot) ---
   # Format: [brightness, red, green, blue, is_on] for each LED
   - id: saved_status_led_state
@@ -477,6 +482,15 @@ globals:
 # Fonts
 ###############################################################
 font:
+  # Testing
+  - file:
+      type: gfonts
+      family: Roboto
+      weight: 600
+    id: font_weather_temp
+    size: 25
+    glyphs: ".-°C0123456789"
+
   # --- Digital Clock Display ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/advanced_dot_digital.ttf"
     id: font_clock_large
@@ -532,7 +546,7 @@ font:
       weight: 550
     id: font_ui_18_bold
     size: 18
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .0123456789°"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ ."
 
   # --- Sub-Header, Menu, Temp & Humid Values ---
   - file:
@@ -648,63 +662,63 @@ image:
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/01d.png"
     id: icon_weather_01d
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/01n.png"
     id: icon_weather_01n
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/02d.png"
     id: icon_weather_02d
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/02n.png"
     id: icon_weather_02n
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/03.png"
     id: icon_weather_03
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/09.png"
     id: icon_weather_09
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/10d.png"
     id: icon_weather_10d
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/10n.png"
     id: icon_weather_10n
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/11.png"
     id: icon_weather_11
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/13.png"
     id: icon_weather_13
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/50.png"
     id: icon_weather_50
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/1232n.png"
     id: icon_weather_1232n
     type: binary
-    invert_alpha: true
-    resize: 32x32
+    invert_alpha: false
+    resize: 42x42
 
 ###############################################################
 # Animations
@@ -783,9 +797,9 @@ script:
           else if (id(current_dashboard_page) == 1)
             id(main_display).show_page(id(page_air_quality));
           else if (id(current_dashboard_page) == 2)
-            id(main_display).show_page(id(page_system_monitor));
-          else if (id(current_dashboard_page) == 3)
             id(main_display).show_page(id(page_weather_dashboard));
+          else if (id(current_dashboard_page) == 3)
+            id(main_display).show_page(id(page_system_monitor));
 
   # Return to last saved page (global variable) after delay.
   # Used for switching back from brightness page
@@ -936,7 +950,7 @@ script:
                     id(latitude), id(longitude));
             return std::string(url);
           capture_response: true
-          max_response_buffer_size: 3072
+          max_response_buffer_size: 2048
           request_headers:
             Content-Type: application/json
           on_response:
@@ -947,46 +961,17 @@ script:
                     ESP_LOGE("fetch_weather", "Could not fetch weather data. Response status: %d", response->status_code);
                     return;
                   }
-                  json::parse_json(body, [](JsonObject root) -> bool {
-                    // Parse temperature
-                    if (root["main"]["temp"].is<float>())
-                      id(weather_temperature).publish_state(root["main"]["temp"]);
 
-                    // Parse humidity
-                    if (root["main"]["humidity"].is<int>())
-                      id(weather_humidity).publish_state(root["main"]["humidity"]);
+                  // Clear previous document
+                  id(weather_json_doc).clear();
 
-                    // Parse wind speed
-                    if (root["wind"]["speed"].is<float>())
-                    {
-                      float wind_ms = root["wind"]["speed"];
-                      float wind_kmh = wind_ms * 3.6f;
-                      id(weather_wind_speed).publish_state(wind_kmh);
-                    }
+                  // Parse JSON into global
+                  DeserializationError error = deserializeJson(id(weather_json_doc), body);
 
-                    // Parse weather condition and icon code
-                    if (root["weather"][0].is<JsonObject>())
-                    {
-                      JsonObject weather = root["weather"][0];
-
-                      // Get icon code
-                      if (weather["icon"].is<const char*>())
-                      {
-                        std::string icon_code = weather["icon"];
-                        id(weather_icon).publish_state(icon_code.c_str());
-                      }
-
-                      // Get description (e.g., "clear sky", "light rain")
-                      if (weather["description"].is<const char*>())
-                      {
-                        id(weather_condition).publish_state(weather["description"]);
-                      }
-                    }
-
+                  if (error)
+                    ESP_LOGE("fetch_weather", "JSON parsing failed: %s", error.c_str());
+                  else
                     ESP_LOGI("fetch_weather", "Weather data updated successfully");
-
-                    return true;
-                  });
           on_error:
             then:
               - lambda: |-
@@ -1669,16 +1654,32 @@ display:
       # ============================================
       - id: page_weather_dashboard
         lambda: |-
-          if (!id(weather_temperature).has_state())
+          if (id(weather_json_doc).isNull())
           {
             // No data yet
-            it.printf(64, 32, id(font7x13), TextAlign::CENTER, "Loading...");
+            it.printf(64, 17, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Loading Weather");
+            it.printf(64, 33, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Data...");
+
             return;
           }
 
-          const std::string icon = id(weather_icon).state;
-          const uint8_t icon_x = 10;
-          const uint8_t icon_y = 10;
+          static JsonObject root = id(weather_json_doc).as<JsonObject>();
+
+          // =============================================
+          // City
+          if (root["name"].is<const char*>())
+            it.printf(64, -2, id(font6x12), TextAlign::TOP_CENTER, "%s", root["name"].as<const char*>());
+
+          // =============================================
+          // Icon
+          const uint8_t icon_x = 0;
+          const uint8_t icon_y = 7;
+          static std::string icon = "";
+
+          if (root["weather"][0]["icon"].is<const char*>())
+            icon = root["weather"][0]["icon"].as<const char*>();
+
+          //icon = "09n"; // Debug
 
           // Draw weather icon based on OpenWeatherMap icon code
           if (icon == "01d") it.image(icon_x, icon_y, id(icon_weather_01d));
@@ -1695,21 +1696,36 @@ display:
           else if (icon == "50d" || icon == "50n") it.image(icon_x, icon_y, id(icon_weather_50));
           else if (icon == "1232n") it.image(icon_x, icon_y, id(icon_weather_1232n));
 
-          // Temperature
-          if (id(weather_temperature).has_state())
-            it.printf(75, 16, id(font_ui_18_bold), TextAlign::TOP_LEFT, "%.1f°", id(weather_temperature).state);
+          // =============================================
+          // Description
+          if (root["weather"][0]["main"].is<const char*>())
+            it.printf(20, 40, id(font6x12), TextAlign::TOP_CENTER, "%s", root["weather"][0]["main"].as<const char*>());
 
+          // =============================================
+          // Temperature
+          if (root["main"]["temp"].is<float>())
+            it.printf(85, 5, id(font_weather_temp), TextAlign::TOP_CENTER, "%.1f°C", root["main"]["temp"].as<float>());
+
+          // =============================================
+          // Min/Max Temperature
+          if (root["main"]["temp_min"].is<float>())
+            it.printf(80, 40, id(font6x12), TextAlign::TOP_CENTER, "%.0f°C", root["main"]["temp_min"].as<float>());
+          if (root["main"]["temp_max"].is<float>())
+            it.printf(105, 40, id(font6x12), TextAlign::TOP_CENTER, "%.0f°C", root["main"]["temp_max"].as<float>());
+
+          // =============================================
           // Humidity
-          it.print(5, 43, id(font6x12), "HUMID");
-          if (id(weather_humidity).has_state())
-            it.printf(5, 53, id(font7x13), "%.0f%%", id(weather_humidity).state);
+          it.print(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "HUMID");
+          if (root["main"]["humidity"].is<int>())
+            it.printf(35, 64, id(font7x13), TextAlign::BOTTOM_LEFT, "%d%%", root["main"]["humidity"].as<int>());
 
           // Wind Speed
-          it.print(70, 43, id(font6x12), "WIND");
-          if (id(weather_wind_speed).has_state())
+          it.print(70, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "WIND");
+          if (root["wind"]["speed"].is<float>())
           {
-            it.printf(70, 53, id(font7x13), "%.0f", id(weather_wind_speed).state);
-            it.print(80, 53, id(font6x12), "km/h");
+            float wind_kmh = root["wind"]["speed"].as<float>() * 3.6f;
+            it.printf(90, 64, id(font7x13), TextAlign::BOTTOM_LEFT, "%.0f", wind_kmh);
+            it.print(110, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "km/h");
           }
 
       # ============================================
@@ -2028,8 +2044,8 @@ display:
       # ============================================
       - id: page_menu_about
         lambda: |-
-          it.printf(64, 0, id(font_ui_21_bold), TextAlign::TOP_CENTER, "ObsidianHub");
-          it.printf(64, 35, id(font_ui_15_bold), TextAlign::CENTER, "v${version}");
+          it.printf(63, 0, id(font_ui_21_bold), TextAlign::TOP_CENTER, "ObsidianHub");
+          it.printf(63, 35, id(font_ui_15_bold), TextAlign::CENTER, "v${version}");
           it.image(1, 52, id(icon_copyright));
 
       # ============================================
@@ -2917,34 +2933,6 @@ sensor:
     accuracy_decimals: 2
     internal: true
 
-  # --- Weather Data ---
-  - platform: template
-    name: "Weather Temperature"
-    id: weather_temperature
-    unit_of_measurement: "°C"
-    accuracy_decimals: 1
-    internal: true
-
-  - platform: template
-    name: "Weather Humidity"
-    id: weather_humidity
-    unit_of_measurement: "%"
-    accuracy_decimals: 0
-    internal: true
-
-  - platform: template
-    name: "Weather Wind Speed"
-    id: weather_wind_speed
-    unit_of_measurement: "km/h"
-    accuracy_decimals: 1
-    internal: true
-
-  #- platform: template
-  #  name: "Weather Code"
-  #  id: weather_code
-  #  accuracy_decimals: 0
-  #  internal: true
-
   # --- HomeAssistant Brightness Sync ---
 
   # Sync brightness from Home Assistant on boot/reconnect
@@ -2991,17 +2979,6 @@ text_sensor:
           default: return {"Not Available"};
       }
 
-  # Weather
-  - platform: template
-    name: "Weather Condition"
-    id: weather_condition
-    internal: true
-
-  - platform: template
-    name: "Weather Icon"
-    id: weather_icon
-    internal: true
-
 ###############################################################
 # Binary Sensors (Physical Buttons)
 ###############################################################
@@ -3018,7 +2995,6 @@ binary_sensor:
       - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
-      - script.execute: fetch_weather
 
   # Right tactile button
   - platform: gpio
@@ -3032,8 +3008,6 @@ binary_sensor:
       - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
-      - lambda: |- # Debug
-          id(update_firmware_component_http).check();
 
   # Rotary encoder push button
   - platform: gpio
