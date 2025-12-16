@@ -15,14 +15,22 @@
 # - Brightness sync on boot fix
 # - Graph range and grid
 # - Graph show min max values
+# Update available later button
 
 ###############################################################
 # Substitutions
 ###############################################################
 substitutions:
   version: "1.0.4"
-  num_dashboard_pages: 3
+  num_dashboard_pages: 4
 
+  # Fallback location if it cant be automatically determined by IP
+  fallback_latitude: "52.5174"  # Defaults to Berlin/Germany
+  fallback_longitude: "13.3951"
+
+###############################################################
+# Dashboard Import for easy ESPHome Device Builder usage
+###############################################################
 dashboard_import:
   package_import_url: github://LostInCompilation/ObsidianHub/Software/ESPHome/obsidianhub.yaml@main
   import_full_config: false
@@ -45,7 +53,9 @@ esphome:
     priority: -100
     then:
       - script.execute: restore_led_states_from_flash
-      - script.execute: update_graph_durations  # Initialize graph durations
+      - script.execute: update_graph_durations
+      - lambda: |- # Debug
+          id(mqtt_component).set_broker_address("192.168.0.103");
 
 esp32:
   variant: ESP32C3
@@ -60,7 +70,7 @@ esp32:
 # Flash Memory Writing
 ###############################################################
 preferences:
-  flash_write_interval: 10min
+  flash_write_interval: 30min
 
 ###############################################################
 # Logging
@@ -86,6 +96,7 @@ api:
     key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
 
   on_client_connected:
+    # Debug
     #- delay: 500ms
     - lambda: |-
         /*ESP_LOGI("brightness", "HA connected — performing brightness sync");
@@ -110,9 +121,12 @@ api:
 ###############################################################
 http_request:
   follow_redirects: true
-  redirect_limit: 4
+  redirect_limit: 3
+  buffer_size_rx: 2048
+  buffer_size_tx: 512
   timeout: 5s
-  #watchdog_timeout: 30s
+  watchdog_timeout: 6s
+  useragent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 ###############################################################
 # Over-The-Air Firmware Updates
@@ -185,7 +199,7 @@ update:
     update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
-    internal: true
+    #internal: true
     source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
     on_update_available:
       then:
@@ -255,11 +269,10 @@ improv_serial:
 # MQTT Configuration
 ###############################################################
 mqtt:
-  broker: !secret mqtt_broker
+  broker: 192.168.0.250 #!secret mqtt_broker
+  port: !secret mqtt_port
   username: !secret mqtt_user
   password: !secret mqtt_password
-  #port: 1883
-  port: !secret mqtt_port
   log_topic: null
   keepalive: 8s
   publish_nan_as_none: true
@@ -365,6 +378,11 @@ globals:
     restore_value: no
     initial_value: "false"
 
+  - id: is_led_sleeping
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
   - id: last_interaction_time_ms
     type: uint32_t
     restore_value: no
@@ -412,6 +430,20 @@ globals:
     type: uint32_t
     restore_value: no
     initial_value: "0"
+
+  # --- Location Fetching For Weather ---
+  - id: latitude
+    type: float
+    restore_value: yes
+    initial_value: "${fallback_latitude}"
+  - id: longitude
+    type: float
+    restore_value: yes
+    initial_value: "${fallback_longitude}"
+  - id: location_fetched
+    type: bool
+    restore_value: no
+    initial_value: "false"
 
   # --- LED State Persistence (survives reboot) ---
   # Format: [brightness, red, green, blue, is_on] for each LED
@@ -642,7 +674,7 @@ script:
           id(last_interaction_time_ms) = millis();
 
           // Only wake if currently sleeping or fading out
-          if (!id(is_display_sleeping) && !id(is_fade_out_in_progress))
+          if (!id(is_display_sleeping) && !id(is_led_sleeping) && !id(is_fade_out_in_progress))
             return;
 
           // Restore LEDs from flash memory
@@ -654,6 +686,7 @@ script:
           id(main_display).set_contrast(id(display_brightness));
 
           id(is_display_sleeping) = false;
+          id(is_led_sleeping) = false;
           id(is_fade_out_in_progress) = false;
 
   # Show menu on long press of rotary encoder (wait 600ms and read button again)
@@ -680,6 +713,8 @@ script:
             id(main_display).show_page(id(page_air_quality));
           else if (id(current_dashboard_page) == 2)
             id(main_display).show_page(id(page_system_monitor));
+          else if (id(current_dashboard_page) == 3)
+            id(main_display).show_page(id(page_weather_dashboard));
 
   # Return to last saved page (global variable) after delay.
   # Used for switching back from brightness page
@@ -781,6 +816,158 @@ script:
             call.perform();
           }
 
+  # Get location from IP
+  - id: fetch_location
+    then:
+      - http_request.get:
+          url: "http://ip-api.com/json/?fields=lat,lon"
+          capture_response: true
+          max_response_buffer_size: 128
+          request_headers:
+            Content-Type: application/json
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code == 200 && body.length() > 0)
+                  {
+                    ESP_LOGI("fetch_location", "Body: %s", body.c_str());
+
+                    json::parse_json(body, [](JsonObject root) -> bool
+                    {
+                      if (root.containsKey("lat") && root.containsKey("lon"))
+                      {
+                        float lat = root["lat"];
+                        float lon = root["lon"];
+                        id(latitude) = lat;
+                        id(longitude) = lon;
+                        id(location_fetched) = true;
+
+                        ESP_LOGI("fetch_location", "Location detected: %.4f, %.4f", lat, lon);
+
+                        return true;
+                      }
+
+                      ESP_LOGE("fetch_location", "Missing lat/lon in response");
+
+                      return false;
+                    });
+                  }
+                  else
+                  {
+                    ESP_LOGE("fetch_location", "Bad response or empty body. Response status: %d", response->status_code);
+                  }
+          on_error:
+            then:
+              - logger.log: "Could not request location - using default coordinates (Berlin, Germany)"
+
+  # Fetch Weather Data
+  - id: fetch_weather
+    then:
+      - http_request.get:
+          url: !lambda |-
+            char url[200];
+            snprintf(url, sizeof(url),
+                     "https://api.brightsky.dev/current_weather?lat=%.4f&lon=%.4f",
+                     id(latitude), id(longitude));
+
+            ESP_LOGI("weather", "Fetching weather from: %s", url);
+
+            return std::string(url);
+          capture_response: true
+          max_response_buffer_size: 2048
+          request_headers:
+            Content-Type: application/json
+          on_response:
+            then:
+              - if:
+                  condition:
+                    lambda: return response->status_code == 200;
+                  then:
+                    - lambda: |-
+                        ESP_LOGI("fetch_weather", "Response received, body length: %d", body.length());
+
+                        if (body.length() == 0)
+                        {
+                          ESP_LOGE("fetch_weather", "Empty response body!");
+                          return;
+                        }
+
+                        json::parse_json(body, [](JsonObject root) -> bool
+                        {
+                          // Bright Sky JSON structure
+                          if (!root.containsKey("weather"))
+                          {
+                            ESP_LOGE("fetch_weather", "No 'weather' key in JSON");
+                            return false;
+                          }
+
+                          JsonObject weather = root["weather"];
+
+                          // Parse temperature
+                          if (weather.containsKey("temperature"))
+                          {
+                            float temp = weather["temperature"];
+                            id(weather_temperature).publish_state(temp);
+                            ESP_LOGI("fetch_weather", "Temperature: %.1f°C", temp);
+                          }
+
+                          // Parse humidity
+                          if (weather.containsKey("relative_humidity"))
+                          {
+                            float humid = weather["relative_humidity"];
+                            id(weather_humidity).publish_state(humid);
+                            ESP_LOGI("fetch_weather", "Humidity: %.0f%%", humid);
+                          }
+
+                          // Parse wind speed (convert m/s to km/h)
+                          if (weather.containsKey("wind_speed"))
+                          {
+                            float wind_ms = weather["wind_speed"];
+                            float wind_kmh = wind_ms * 3.6;
+                            id(weather_wind_speed).publish_state(wind_kmh);
+                            ESP_LOGI("fetch_weather", "Wind: %.1f km/h", wind_kmh);
+                          }
+
+                          // Parse condition
+                          if (weather.containsKey("condition"))
+                          {
+                            const char* condition = weather["condition"];
+                            std::string cond_str = condition;
+
+                            // Convert condition to readable text
+                            if (cond_str == "dry") {
+                              id(weather_condition).publish_state("Clear");
+                            } else if (cond_str == "fog") {
+                              id(weather_condition).publish_state("Foggy");
+                            } else if (cond_str == "rain") {
+                              id(weather_condition).publish_state("Rain");
+                            } else if (cond_str == "sleet") {
+                              id(weather_condition).publish_state("Sleet");
+                            } else if (cond_str == "snow") {
+                              id(weather_condition).publish_state("Snow");
+                            } else if (cond_str == "hail") {
+                              id(weather_condition).publish_state("Hail");
+                            } else if (cond_str == "thunderstorm") {
+                              id(weather_condition).publish_state("Storm");
+                            } else {
+                              id(weather_condition).publish_state("Cloudy");
+                            }
+
+                            ESP_LOGI("fetch_weather", "Condition: %s", condition);
+                          }
+
+                          ESP_LOGI("fetch_weather", "Weather data updated successfully");
+                          return true;
+                        });
+                  else:
+                    - logger.log:
+                        format: "HTTP Request failed, status: %d"
+                        args: ['response->status_code']
+          on_error:
+            then:
+              - logger.log: "HTTP Request error - connection failed"
+
+
 ###############################################################
 # Intervals (Periodic Tasks)
 ###############################################################
@@ -814,6 +1001,11 @@ interval:
           then:
             - animation.next_frame: animation_spinner2
 
+    # Update Weather Data
+  #- interval: 2min
+  #  then:
+  #    - script.execute: fetch_weather
+
   # Save current LED states to global which will be written to flash every 10min
   - interval: 500ms
     startup_delay: 5s
@@ -846,8 +1038,8 @@ interval:
           id(saved_key2_led_state)[2] = current.get_green();
           id(saved_key2_led_state)[3] = current.get_blue();
 
-          // Save is_on() state only when not sleeping
-          if (!id(is_fade_out_in_progress) && !id(is_display_sleeping))
+          // Save is_on() state only when not sleeping LEDs
+          if (!id(is_fade_out_in_progress) && !id(is_led_sleeping))
           {
             id(saved_status_led_state)[4] = id(led_status).current_values.is_on() ? 1.0f : 0.0f;
             id(saved_key1_led_state)[4] = id(led_key1).current_values.is_on() ? 1.0f : 0.0f;
@@ -897,7 +1089,7 @@ interval:
           }
 
   # Handle boot animation and auto-sleep
-  - interval: 50ms
+  - interval: 75ms
     then:
       - lambda: |-
           static const uint32_t BOOT_LOGO_HOLD_MS = 3800;
@@ -978,8 +1170,12 @@ interval:
           // ============================================
           // AUTO-SLEEP: Fade out after inactivity timeout
           // ============================================
-          else if (id(sleep_timeout_milliseconds) > 0 && !id(is_display_sleeping))
+          else if (id(sleep_timeout_milliseconds) > 0)
           {
+              // Skip if both are sleeping already
+              if (id(is_display_sleeping) && id(is_led_sleeping))
+                return;
+
               // Skip auto-sleep on certain pages
               auto page = id(main_display).get_active_page();
               if (page == id(page_graph_duration_restart_confirm) ||
@@ -989,12 +1185,11 @@ interval:
                   page == id(page_update_available))
                   return;
 
-              // Check if any button is held
               const bool any_button_held = id(button_encoder).state ||
                                         id(button_left).state ||
                                         id(button_right).state;
 
-              // If button is held, reset the timer to prevent sleep
+              // If any button is held, reset the timer to prevent sleep
               if (any_button_held)
               {
                   id(last_interaction_time_ms) = now;
@@ -1009,42 +1204,53 @@ interval:
                   return;
               }
 
-              uint32_t idle_time = now - id(last_interaction_time_ms);
+              // Sleep components
+              const char* sleep_option = id(select_sleep_components).current_option();
+              const bool sleep_display = (strcmp(sleep_option, "Both") == 0 || strcmp(sleep_option, "Display") == 0);
+              const bool sleep_leds = (strcmp(sleep_option, "Both") == 0 || strcmp(sleep_option, "LEDs") == 0);
 
-              // Start fade out when timeout reached
-              if (idle_time >= id(sleep_timeout_milliseconds) && !id(is_fade_out_in_progress))
+              const uint32_t idle_time = now - id(last_interaction_time_ms);
+              const bool timeout_reached = (idle_time >= id(sleep_timeout_milliseconds));
+
+              // Display fade out
+              if (sleep_display && !id(is_display_sleeping))
               {
-                  id(is_fade_out_in_progress) = true;
-                  fade_start = now;
-              }
-
-              if (!id(is_fade_out_in_progress))
-                  return;
-
-              // Perform fade out
-              const uint32_t elapsed = now - fade_start;
-              const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
-
-              if (elapsed < FADE_DURATION_MS)
-              {
-                  const float gamma_corrected = pow(progress, GAMMA) * id(display_brightness);
-                  id(main_display).set_contrast(gamma_corrected);
-              }
-              else
-              {
-                  // Enter sleep mode
-                  id(main_display).set_contrast(0.0f);
-                  id(is_display_sleeping) = true;
-                  id(is_fade_out_in_progress) = false;
-                  id(main_display).stop_poller();
-
-                  // Turn off LEDs if enabled
-                  if (id(switch_led_auto_sleep).state)
+                  if (timeout_reached && !id(is_fade_out_in_progress))
                   {
-                      id(led_status).turn_off().perform();
-                      id(led_key1).turn_off().perform();
-                      id(led_key2).turn_off().perform();
+                      id(is_fade_out_in_progress) = true;
+                      fade_start = now;
                   }
+
+                  // Perform fade out
+                  if (id(is_fade_out_in_progress))
+                  {
+                      const uint32_t elapsed = now - fade_start;
+
+                      if (elapsed < FADE_DURATION_MS)
+                      {
+                          // Fading
+                          const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
+                          const float gamma_corrected = pow(progress, GAMMA) * id(display_brightness);
+                          id(main_display).set_contrast(gamma_corrected);
+                      }
+                      else
+                      {
+                          // Fade complete
+                          id(is_fade_out_in_progress) = false;
+                          id(main_display).set_contrast(0.0f);
+                          id(main_display).stop_poller();
+                          id(is_display_sleeping) = true;
+                      }
+                  }
+              }
+
+              // LEDs
+              if (sleep_leds && timeout_reached && !id(is_led_sleeping))
+              {
+                  id(led_status).turn_off().perform();
+                  id(led_key1).turn_off().perform();
+                  id(led_key2).turn_off().perform();
+                  id(is_led_sleeping) = true;
               }
           }
 
@@ -1370,6 +1576,40 @@ display:
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
           if (fill_w > 0)
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
+
+      # ============================================
+      # WEATHER DASHBOARD
+      # ============================================
+      - id: page_weather_dashboard
+        lambda: |-
+          // Weather page
+          if (id(weather_temperature).has_state() && id(weather_condition).has_state())
+          {
+            // Temperature - large and centered at top
+            it.printf(64, 0, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%.1f°C", id(weather_temperature).state);
+
+            // Weather condition text
+            std::string condition = id(weather_condition).state;
+            const char* weather_desc = condition.c_str();
+
+            it.printf(64, 25, id(font7x13), TextAlign::TOP_CENTER, "%s", weather_desc);
+
+            // Humidity and Wind
+            if (id(weather_humidity).has_state())
+            {
+              it.printf(0, 45, id(font6x12), "Humid: %.0f%%", id(weather_humidity).state);
+            }
+            if (id(weather_wind_speed).has_state())
+            {
+              it.printf(0, 56, id(font6x12), "Wind: %.1f km/h", id(weather_wind_speed).state);
+            }
+          }
+          else
+          {
+            it.printf(64, 32, id(font7x13), TextAlign::CENTER, "Loading...");
+          }
+
+
 
       # ============================================
       # BRIGHTNESS CONTROL: Shows percentage with progress bar
@@ -1869,11 +2109,11 @@ graphical_display_menu:
             int sec = id(sleep_timeout_milliseconds) / 1000;
             if (sec == 0)
             {
-              snprintf(buf, sizeof(buf), "Sleep: OFF");
+              snprintf(buf, sizeof(buf), "Sleep Time: OFF");
             }
             else if (sec < 60)
             {
-              snprintf(buf, sizeof(buf), "Sleep: %ds", sec);
+              snprintf(buf, sizeof(buf), "Sleep Time: %ds", sec);
             }
             else
             {
@@ -1883,13 +2123,13 @@ graphical_display_menu:
                 int h = min / 60;
                 int m = min % 60;
                 if (m == 0)
-                  snprintf(buf, sizeof(buf), "Sleep: %dh", h);
+                  snprintf(buf, sizeof(buf), "Sleep Time: %dh", h);
                 else
-                  snprintf(buf, sizeof(buf), "Sleep: %dh%dm", h, m);
+                  snprintf(buf, sizeof(buf), "Sleep Time: %dh%dm", h, m);
               }
               else
               {
-                snprintf(buf, sizeof(buf), "Sleep: %dm", min);
+                snprintf(buf, sizeof(buf), "Sleep Time: %dm", min);
               }
             }
             return buf;
@@ -1900,13 +2140,11 @@ graphical_display_menu:
                   id(is_menu_detail_visible) = true;
                   id(is_menu_visible) = false;
 
-        # Enable LED auto sleep
-        - type: switch
+        # Sleep components select
+        - type: select
           immediate_edit: false
-          text: "LED Sleep"
-          on_text: "ON"
-          off_text: "OFF"
-          switch: switch_led_auto_sleep
+          text: "Sleep"
+          select: select_sleep_components
 
         # Display brightness
         - type: custom
@@ -2257,7 +2495,7 @@ sensor:
     name: "WiFi Signal"
     id: sensor_wifi_signal
     entity_category: "diagnostic"
-    update_interval: 10s
+    update_interval: 20s
 
   - platform: copy
     source_id: sensor_wifi_signal
@@ -2275,7 +2513,7 @@ sensor:
   # AHT20: Temperature and humidity
   - platform: aht10
     variant: AHT20
-    update_interval: 5s  # Slower update prevents self-heating
+    update_interval: 10s  # Slower update prevents self-heating
     address: 0x38
     temperature:
       name: "Temperature"
@@ -2299,7 +2537,7 @@ sensor:
   - platform: ens160_spi
     cs_pin: GPIO2
     data_rate: 200kHz
-    update_interval: 5s
+    update_interval: 7s
     eco2:
       name: "eCO2"
       id: sensor_eco2
@@ -2570,6 +2808,34 @@ sensor:
     accuracy_decimals: 2
     internal: true
 
+  # --- Weather Data ---
+  - platform: template
+    name: "Weather Temperature"
+    id: weather_temperature
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    internal: true
+
+  - platform: template
+    name: "Weather Humidity"
+    id: weather_humidity
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    internal: true
+
+  - platform: template
+    name: "Weather Wind Speed"
+    id: weather_wind_speed
+    unit_of_measurement: "km/h"
+    accuracy_decimals: 1
+    internal: true
+
+  #- platform: template
+  #  name: "Weather Code"
+  #  id: weather_code
+  #  accuracy_decimals: 0
+  #  internal: true
+
   # --- HomeAssistant Brightness Sync ---
 
   # Sync brightness from Home Assistant on boot/reconnect
@@ -2616,6 +2882,12 @@ text_sensor:
           default: return {"Not Available"};
       }
 
+  # Weather Condition Text
+  - platform: template
+    name: "Weather Condition"
+    id: weather_condition
+    internal: true
+
 ###############################################################
 # Binary Sensors (Physical Buttons)
 ###############################################################
@@ -2629,9 +2901,15 @@ binary_sensor:
     id: button_left
     use_interrupt: true
     filters:
-      - delayed_on: 10ms  # Debounce
+      - delayed_on: 2ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
+
+      # Debug
+      - script.execute: fetch_location
+      #- script.wait: fetch_location
+      #- script.execute: fetch_weather
+      #- script.wait: fetch_weather
 
   # Right tactile button
   - platform: gpio
@@ -2642,7 +2920,7 @@ binary_sensor:
     id: button_right
     use_interrupt: true
     filters:
-      - delayed_on: 10ms  # Debounce
+      - delayed_on: 2ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
 
@@ -2655,7 +2933,7 @@ binary_sensor:
     id: button_encoder
     use_interrupt: true
     filters:
-      - delayed_on: 10ms  # Debounce
+      - delayed_on: 2ms  # Debounce
     # On button down
     on_press:
       - lambda: |-
@@ -2668,7 +2946,8 @@ binary_sensor:
               || id(main_display).get_active_page() == id(page_update_available))
             return;
 
-          // Only ignore next short press if fully asleep (not just fading out into sleep)
+          // Only ignore next short press if display is asleep
+          // (not just fading out into sleep or only LEDs sleeping)
           if (id(is_display_sleeping))
             id(ignore_next_encoder_button_press_after_wake_up) = true;
 
@@ -2678,7 +2957,7 @@ binary_sensor:
           id(check_for_long_press).execute();
     on_click:
       # Short press (button released again)
-      - min_length: 20ms
+      - min_length: 2ms
         max_length: 599ms
         then:
           - lambda: |-
@@ -2693,7 +2972,7 @@ binary_sensor:
 
               if (id(ignore_next_encoder_button_press_after_wake_up))
               {
-                // Ignore this button press (when waking up from sleep)
+                // Ignore this button press (when waking display up from sleep)
                 id(ignore_next_encoder_button_press_after_wake_up) = false;
                 return;
               }
@@ -2761,7 +3040,7 @@ binary_sensor:
 button:
   # Reboot
   - platform: template
-    name: "Reboot ObsidianHub"
+    name: "Reboot"
     id: button_restart
     icon: mdi:restart
     entity_category: "config"
@@ -2813,17 +3092,7 @@ button:
 # Configuration Switches
 ###############################################################
 switch:
-  - platform: template
-    name: "Enable LED Auto Sleep"
-    id: switch_led_auto_sleep
-    entity_category: "config"
-    icon: mdi:timer
-    restore_mode: RESTORE_DEFAULT_ON
-    optimistic: true
-    on_state:
-      then:
-        - script.execute: wake_display_and_reset_timer
-
+  # Invert Display
   - platform: template
     name: "Invert Display"
     id: switch_invert_display
@@ -2843,7 +3112,27 @@ switch:
             id(main_display).set_invert(false);
 
 ###############################################################
-# Configuration Numbers
+# Dropdown Select
+###############################################################
+select:
+  # Sleep Components
+  - platform: template
+    name: "Sleep Components"
+    id: select_sleep_components
+    entity_category: "config"
+    icon: mdi:sleep
+    restore_value: true
+    optimistic: true
+    options:
+     - "Both"
+     - "Display"
+     - "LEDs"
+    initial_option: "Both"
+    set_action:
+      - script.execute: wake_display_and_reset_timer
+
+###############################################################
+# Numbers
 ###############################################################
 number:
   # Brightness control - can be read and set from Home Assistant
