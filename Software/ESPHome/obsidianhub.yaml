@@ -1153,11 +1153,11 @@ interval:
                   // Show dashboard or WiFi setup page if it hasn't been set up by user already
                   if (id(wifi_has_been_setup_by_user))
                   {
-                      id(main_display).show_page(id(page_main_dashboard));
+                      //id(main_display).show_page(id(page_main_dashboard));
 
                       // ---------- DEBUG -----------
                       // Show update available page
-                      //id(main_display).show_page(id(page_update_available));
+                      id(main_display).show_page(id(page_update_available));
                   }
                   else
                   {
@@ -1305,13 +1305,45 @@ display:
       # ============================================
       - id: page_update_available
         lambda: |-
-          it.printf(64, 11, id(font_ui_15_bold), TextAlign::CENTER, "Firmware update");
-          it.printf(64, 28, id(font_ui_15_bold), TextAlign::CENTER, "available");
+          it.printf(64, 8, id(font_ui_15_bold), TextAlign::CENTER, "Firmware update");
+          it.printf(64, 25, id(font_ui_15_bold), TextAlign::CENTER, "available");
 
-          // Install button
-          const int button_width = 68;
-          it.filled_rectangle(64 - (button_width / 2), 44, button_width, 19);
-          it.printf(64, 43, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "INSTALL");
+          const int button_width = 58;
+          const int button_height = 19;
+          const int button_spacing = 7;
+          const int button_y = 43;
+          const int button_text_offset = 3;
+
+          int install_x = 64 - button_width - (button_spacing / 2);
+          int later_x = 64 + (button_spacing / 2);
+
+          // Install Button
+          if (id(update_available_page_selected_button) == 0)
+          {
+            // Selected - filled
+            it.filled_rectangle(install_x, button_y, button_width, button_height);
+            it.printf(install_x + (button_width / 2), button_y + button_text_offset, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "INSTALL");
+          }
+          else
+          {
+            // Not selected - outline only
+            it.rectangle(install_x, button_y, button_width, button_height);
+            it.printf(install_x + (button_width / 2), button_y + button_text_offset, id(font7x13B), TextAlign::TOP_CENTER, "INSTALL");
+          }
+
+          // Later button
+          if (id(update_available_page_selected_button) == 1)
+          {
+            // Selected - filled
+            it.filled_rectangle(later_x, button_y, button_width, button_height);
+            it.printf(later_x + (button_width / 2), button_y + button_text_offset, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "LATER");
+          }
+          else
+          {
+            // Not selected - outline only
+            it.rectangle(later_x, button_y, button_width, button_height);
+            it.printf(later_x + (button_width / 2), button_y + button_text_offset, id(font7x13B), TextAlign::TOP_CENTER, "LATER");
+          }
 
       # ============================================
       # OTA UPDATING PAGE
@@ -1932,9 +1964,9 @@ display:
           it.printf(77, 16, id(font_ui_18_bold), TextAlign::TOP_CENTER, "required");
 
           // OK button
-          const int button_width = 40;
+          const int button_width = 41;
           it.filled_rectangle(64 - (button_width / 2), 44, button_width, 19);
-          it.printf(64, 43, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
+          it.printf(64, 42, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
 
       # ============================================
       # MENU DETAIL: About
@@ -2923,7 +2955,7 @@ binary_sensor:
     id: button_left
     use_interrupt: true
     filters:
-      - delayed_on: 2ms  # Debounce
+      - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
 
@@ -2936,7 +2968,7 @@ binary_sensor:
     id: button_right
     use_interrupt: true
     filters:
-      - delayed_on: 2ms  # Debounce
+      - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
 
@@ -2949,7 +2981,7 @@ binary_sensor:
     id: button_encoder
     use_interrupt: true
     filters:
-      - delayed_on: 2ms  # Debounce
+      - delayed_on: 10ms  # Debounce
     # On button down
     on_press:
       - lambda: |-
@@ -2974,7 +3006,7 @@ binary_sensor:
     # Short press (button released again)
     on_click:
       - min_length: 2ms
-        max_length: 800ms
+        max_length: 599ms
         then:
           - lambda: |-
               id(check_for_long_press).stop();
@@ -2999,8 +3031,23 @@ binary_sensor:
               // Handle pages
               if (id(main_display).get_active_page() == id(page_update_available))
               {
-                // Install update
-                id(update_firmware_component_http).perform(true);
+                if (id(update_available_page_selected_button) == 0)
+                {
+                  // Install update
+                  id(update_firmware_component_http).perform(true);
+                }
+                else
+                {
+                  //id(main_display).show_page(id(page_));
+
+                  // Later button pressed - return to current dashboard
+                  id(is_menu_detail_visible) = false;
+                  id(is_menu_visible) = false;
+                  id(return_to_current_dashboard).execute();
+
+                  id(update_available_page_selected_button) = 0;
+                }
+
                 return;
               }
               else if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm))
