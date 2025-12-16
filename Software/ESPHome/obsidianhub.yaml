@@ -196,7 +196,7 @@ update:
   - platform: http_request
     name: "Firmware Update"
     id: update_firmware_component_http
-    update_interval: 1min
+    update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
     internal: true
@@ -1153,11 +1153,11 @@ interval:
                   // Show dashboard or WiFi setup page if it hasn't been set up by user already
                   if (id(wifi_has_been_setup_by_user))
                   {
-                      //id(main_display).show_page(id(page_main_dashboard));
+                      id(main_display).show_page(id(page_main_dashboard));
 
                       // ---------- DEBUG -----------
                       // Show update available page
-                      id(main_display).show_page(id(page_update_available));
+                      //id(main_display).show_page(id(page_update_available));
                   }
                   else
                   {
@@ -3016,12 +3016,9 @@ binary_sensor:
 
                 return;
               }
-
-              // Check if leaving graph duration page - show restart confirmation
-              if (id(main_display).get_active_page() == id(page_menu_graph_duration) &&
-                  id(is_menu_detail_visible))
+              else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
               {
-                // Update graphs and show restart confirmation
+                // Leaving graph duration page - show restart confirmation
                 id(update_graph_durations).execute();
                 id(main_display).show_page(id(page_graph_duration_restart_confirm));
 
@@ -3030,8 +3027,7 @@ binary_sensor:
 
                 return;
               }
-
-              if (id(is_menu_visible))
+              else if (id(is_menu_visible))
               {
                 id(main_menu).enter();
               }
