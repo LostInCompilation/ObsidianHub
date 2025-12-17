@@ -3070,10 +3070,6 @@ binary_sensor:
       - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
-      # Debug
-      - script.execute: fetch_location
-      - script.wait: fetch_location
-      - script.execute: fetch_weather
 
   # Rotary encoder push button
   - platform: gpio
