@@ -21,25 +21,29 @@
 # Substitutions
 ###############################################################
 substitutions:
+  # ----------------------------------
   # Firmware Version
   version: "1.0.4"
 
-  # Update URL
+  # ----------------------------------
+  # Firmware Update URL
   # Main
   url_update_manifest: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/main/manifest.json"
 
   # Client 00pg
   #url_update_manifest: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/client_00pg/manifest.json"
 
-  # Fallback location if it cant be automatically determined by IP
-  fallback_latitude: "52.5174"  # Defaults to Berlin/Germany
-  fallback_longitude: "13.3951"
+  # ----------------------------------
+  # Dashboards
+  num_dashboard_pages: 4
+  enable_system_monitor_dashboard: false
 
+  # ----------------------------------
+  # Weather
+  fallback_latitude: "52.5174"   # Fallback location if it cant be automatically determined by IP
+  fallback_longitude: "13.3951"  # Defaults to Berlin/Germany
   # API Key for OpenWeatherMap
   openweathermap_api_key: !secret openweathermap_api_key
-
-  # Number of dashboard pages
-  num_dashboard_pages: 4
 
 ###############################################################
 # Dashboard Import for easy ESPHome Device Builder usage
@@ -682,12 +686,12 @@ image:
     id: icon_weather_02d
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 55x55
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/02n.png"
     id: icon_weather_02n
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 56x56
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/03.png"
     id: icon_weather_03
     type: binary
@@ -697,22 +701,22 @@ image:
     id: icon_weather_09
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 50x50
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/10d.png"
     id: icon_weather_10d
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 50x50
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/10n.png"
     id: icon_weather_10n
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 50x50
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/11.png"
     id: icon_weather_11
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 50x50
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/13.png"
     id: icon_weather_13
     type: binary
@@ -727,7 +731,7 @@ image:
     id: icon_weather_1232n
     type: binary
     invert_alpha: false
-    resize: 52x52
+    resize: 47x47
 
 ###############################################################
 # Animations
@@ -1709,91 +1713,168 @@ display:
 
           // =============================================
           // Icon
-          static std::string icon = "";
-
-          uint8_t icon_x = 0;
-          uint8_t icon_y = 0;
-          int8_t temp_desc_offset = 0;
+          int8_t icon_x = 0;
+          int8_t icon_y = 0;
+          static char icon[8] = "";
 
           if (root["weather"][0]["icon"].is<const char*>())
-            icon = root["weather"][0]["icon"].as<const char*>();
+          {
+            const char* icon_str = root["weather"][0]["icon"].as<const char*>();
+            strncpy(icon, icon_str, sizeof(icon) - 1);
+            icon[sizeof(icon) - 1] = '\0';
+          }
 
           // Draw weather icon based on OpenWeatherMap icon code
-          /*if (icon == "01d") it.image(icon_x, icon_y, id(icon_weather_01d));
-          else if (icon == "01n") it.image(icon_x, icon_y, id(icon_weather_01n));
-          else if (icon == "02d") it.image(icon_x, icon_y, id(icon_weather_02d));
-          else if (icon == "02n") it.image(icon_x, icon_y, id(icon_weather_02n));
-          else if (icon == "03d" || icon == "03n") it.image(icon_x, icon_y, id(icon_weather_03));
-          else if (icon == "04d" || icon == "04n") it.image(icon_x, icon_y, id(icon_weather_03));
-          else if (icon == "09d" || icon == "09n") it.image(icon_x, icon_y, id(icon_weather_09));
-          else if (icon == "10d") it.image(icon_x, icon_y, id(icon_weather_10d));
-          else if (icon == "10n") it.image(icon_x, icon_y, id(icon_weather_10n));
-          else if (icon == "11d" || icon == "11n") it.image(icon_x, icon_y, id(icon_weather_11));
-          else if (icon == "13d" || icon == "13n") it.image(icon_x, icon_y, id(icon_weather_13));
-          else if (icon == "50d" || icon == "50n") it.image(icon_x, icon_y, id(icon_weather_50));
-          else if (icon == "1232n") it.image(icon_x, icon_y, id(icon_weather_1232n));*/
+          if (strcmp(icon, "01d") == 0)
+          {
+            icon_x = 6;
+            icon_y = 1;
+            it.image(icon_x, icon_y, id(icon_weather_01d));
+          }
+          else if (strcmp(icon, "01n") == 0)
+          {
+            icon_x = 10;
+            icon_y = 1;
+            it.image(icon_x, icon_y, id(icon_weather_01n));
+          }
+          else if (strcmp(icon, "02d") == 0 || strcmp(icon, "03d") == 0)
+          {
+            icon_x = 1;
+            icon_y = -4;
+            it.image(icon_x, icon_y, id(icon_weather_02d));
+          }
+          else if (strcmp(icon, "02n") == 0 || strcmp(icon, "03n") == 0)
+          {
+            icon_x = 1;
+            icon_y = -5;
+            it.image(icon_x, icon_y, id(icon_weather_02n));
+          }
+          else if (strcmp(icon, "04d") == 0 || strcmp(icon, "04n") == 0)
+          {
+            icon_x = 3;
+            icon_y = -4;
+            it.image(icon_x, icon_y, id(icon_weather_03));
+          }
+          else if (strcmp(icon, "09d") == 0 || strcmp(icon, "09n") == 0)
+          {
+            icon_x = 3;
+            icon_y = 0;
+            it.image(icon_x, icon_y, id(icon_weather_09));
+          }
+          else if (strcmp(icon, "10d") == 0)
+          {
+            icon_x = 5;
+            icon_y = 0;
+            it.image(icon_x, icon_y, id(icon_weather_10d));
+          }
+          else if (strcmp(icon, "10n") == 0)
+          {
+            icon_x = 5;
+            icon_y = 0;
+            it.image(icon_x, icon_y, id(icon_weather_10n));
+          }
+          else if (strcmp(icon, "11d") == 0 || strcmp(icon, "11n") == 0)
+          {
+            icon_x = 3;
+            icon_y = 0;
+            it.image(icon_x, icon_y, id(icon_weather_11));
+          }
+          else if (strcmp(icon, "13d") == 0 || strcmp(icon, "13n") == 0)
+          {
+            icon_x = 2;
+            icon_y = -1;
+            it.image(icon_x, icon_y, id(icon_weather_13));
+          }
+          else if (strcmp(icon, "50d") == 0 || strcmp(icon, "50n") == 0)
+          {
+            icon_x = 2;
+            icon_y = -3;
+            it.image(icon_x, icon_y, id(icon_weather_50));
+          }
+          else if (strcmp(icon, "1232n") == 0)
+          {
+            icon_x = 4;
+            icon_y = -1;
+            it.image(icon_x, icon_y, id(icon_weather_1232n));
+          }
 
           // Debug
-          switch ((uint32_t)id(brightness_control).state)
+          /*switch ((uint32_t)id(brightness_control).state)
           {
             case 0:
-              icon_x = 10;
+              icon_x = 6;
               icon_y = 1;
-              temp_desc_offset = -1;
               it.image(icon_x, icon_y, id(icon_weather_01d));
             break;
             case 2:
               icon_x = 10;
               icon_y = 1;
-              temp_desc_offset = -1;
               it.image(icon_x, icon_y, id(icon_weather_01n));
             break;
             case 4:
+              icon_x = 1;
+              icon_y = -4;
               it.image(icon_x, icon_y, id(icon_weather_02d));
             break;
             case 6:
+              icon_x = 1;
+              icon_y = -5;
               it.image(icon_x, icon_y, id(icon_weather_02n));
             break;
             case 8:
+              icon_x = 3;
+              icon_y = -4;
               it.image(icon_x, icon_y, id(icon_weather_03));
             break;
             case 10:
+              icon_x = 3;
+              icon_y = 0;
               it.image(icon_x, icon_y, id(icon_weather_09));
             break;
             case 12:
+              icon_x = 5;
+              icon_y = 0;
               it.image(icon_x, icon_y, id(icon_weather_10d));
             break;
             case 14:
+              icon_x = 5;
+              icon_y = 0;
               it.image(icon_x, icon_y, id(icon_weather_10n));
             break;
             case 16:
+              icon_x = 3;
+              icon_y = 0;
               it.image(icon_x, icon_y, id(icon_weather_11));
             break;
             case 18:
+              icon_x = 2;
+              icon_y = -1;
               it.image(icon_x, icon_y, id(icon_weather_13));
             break;
             case 20:
+              icon_x = 2;
+              icon_y = -3;
               it.image(icon_x, icon_y, id(icon_weather_50));
             break;
             case 22:
+              icon_x = 4;
+              icon_y = -1;
               it.image(icon_x, icon_y, id(icon_weather_1232n));
             break;
 
             default:
             break;
-          }
-
-
+          }*/
 
           // =============================================
           // Description
           if (root["weather"][0]["main"].is<const char*>())
-            it.printf(94, 3 + temp_desc_offset, id(font6x12), TextAlign::TOP_CENTER, "%s", root["weather"][0]["main"].as<const char*>());
+            it.printf(94, 1, id(font6x12), TextAlign::TOP_CENTER, "%s", root["weather"][0]["main"].as<const char*>());
 
           // =============================================
           // Temperature
           if (root["main"]["temp"].is<float>())
-            it.printf(94, 11 + temp_desc_offset, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
+            it.printf(94, 9, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
 
           // =============================================
           // TICKER
@@ -1803,13 +1884,13 @@ display:
           const int32_t TICKER_Y = 63;
           const char* SEPARATOR = "  |  ";
 
-          static int32_t ticker_offset = 128; // Start position
+          static int32_t ticker_offset = 126; // Start position
           static int32_t ticker_width = 0;
           static int32_t last_scroll_time = 0;
           static char ticker_text[372] = "";
 
           // For building new ticker text
-          char new_ticker[372] = "";
+          char new_ticker[256] = "";
           char temp_buf[32];
           int32_t pos = 0;
 
@@ -2765,17 +2846,6 @@ light:
 # Sensors
 ###############################################################
 sensor:
-  # Debug
-  #- platform: debug
-  #  block:
-  #    name: "Heap Max Block"
-  #    id: sensor_heap_max_block
-  #    internal: true
-  #  loop_time:
-  #    name: "Loop Time"
-  #    id: sensor_loop_time
-  #    internal: true
-
   # --- WiFi Status ---
 
   # Signal strength
@@ -2825,7 +2895,7 @@ sensor:
   - platform: ens160_spi
     cs_pin: GPIO2
     data_rate: 200kHz
-    update_interval: 7s
+    update_interval: 11s
     eco2:
       name: "eCO2"
       id: sensor_eco2
@@ -3136,7 +3206,7 @@ text_sensor:
   - platform: template
     name: "Air Quality"
     icon: mdi:chemical-weapon
-    update_interval: 1s
+    update_interval: 2s
     lambda: |-
       switch ((uint32_t)(id(sensor_aqi).state))
       {
@@ -3179,7 +3249,6 @@ binary_sensor:
     on_press:
       then:
         - script.execute: wake_display_and_reset_timer
-        - script.execute: fetch_weather
 
   # Rotary encoder push button
   - platform: gpio
@@ -3304,7 +3373,9 @@ binary_sensor:
               else
               {
                 // Cycle through pages
-                id(current_dashboard_page) = (id(current_dashboard_page) + 1) % ${num_dashboard_pages};
+                const uint8_t num_pages = ${num_dashboard_pages if enable_system_monitor_dashboard else num_dashboard_pages - 1};
+
+                id(current_dashboard_page) = (id(current_dashboard_page) + 1) % num_pages;
                 id(return_to_current_dashboard).execute();
               }
 
