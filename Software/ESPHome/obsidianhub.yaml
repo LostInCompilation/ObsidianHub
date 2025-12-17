@@ -1172,7 +1172,7 @@ interval:
               else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase complete
               {
                   // Publish initial config values
-                  id(config_display_brightness).publish_state((int)(id(display_brightness) * 100.0f));
+                  id(config_display_brightness).publish_state((int32_t)(id(display_brightness) * 100.0f));
                   id(config_auto_sleep).publish_state(id(sleep_timeout_milliseconds) / 1000);
 
                   id(is_boot_complete) = true;
@@ -1332,14 +1332,14 @@ display:
           it.printf(64, 8, id(font_ui_15_bold), TextAlign::CENTER, "Firmware update");
           it.printf(64, 25, id(font_ui_15_bold), TextAlign::CENTER, "available");
 
-          const int button_width = 58;
-          const int button_height = 19;
-          const int button_spacing = 8;
-          const int button_y = 43;
-          const int button_text_offset = 3;
+          const uint32_t button_width = 58;
+          const uint32_t button_height = 19;
+          const uint32_t button_spacing = 8;
+          const uint32_t button_y = 43;
+          const uint32_t button_text_offset = 3;
 
-          int install_x = 64 - button_width - (button_spacing / 2);
-          int later_x = 64 + (button_spacing / 2);
+          uint32_t install_x = 64 - button_width - (button_spacing / 2);
+          uint32_t later_x = 64 + (button_spacing / 2);
 
           // Install Button
           if (id(update_available_page_selected_button) == 0)
@@ -1387,8 +1387,8 @@ display:
                     "%.0f%%", id(ota_progress));
 
           // Progress bar
-          const int BAR_W = 100, BAR_H = 10, BAR_X = 14, BAR_Y = 50;
-          int fill_w = (int)((id(ota_progress) / 100.0f) * (BAR_W - 4));
+          const uint32_t BAR_W = 100, BAR_H = 10, BAR_X = 14, BAR_Y = 50;
+          uint32_t fill_w = (uint32_t)((id(ota_progress) / 100.0f) * (BAR_W - 4));
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
           if (fill_w > 0)
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
@@ -1481,7 +1481,7 @@ display:
           if (!id(ens160_sensor_ready))
           {
             unsigned long uptime_sec = millis() / 1000;
-            int minutes_remaining = 3 - (uptime_sec / 60);
+            int32_t minutes_remaining = 3 - (uptime_sec / 60);
             if (minutes_remaining < 1)
               minutes_remaining = 1;
 
@@ -1497,9 +1497,9 @@ display:
           }
 
           // AQI
-          const int aqi_value = (int)id(sensor_aqi).state;
-          int aqi_number_x_offset = 0;
-          int aqi_number_x_gap_extend = 0;
+          const uint32_t aqi_value = (uint32_t)id(sensor_aqi).state;
+          int32_t aqi_number_x_offset = 0;
+          int32_t aqi_number_x_gap_extend = 0;
 
           // Responsive layout
           if (aqi_value == 1)
@@ -1559,14 +1559,14 @@ display:
           it.image(8, 36, id(icon_cloud));
 
           // Get the width of the value text
-          int value_x = 19;
-          std::string value_str = str_sprintf("%d", (int)id(sensor_eco2).state);
+          uint32_t value_x = 19;
+          std::string value_str = str_sprintf("%u", (uint32_t)id(sensor_eco2).state);
           int x1, y1, value_width, value_height;
           it.get_text_bounds(value_x, 65, value_str.c_str(), id(font_eco2_tvoc_values),
                             TextAlign::BOTTOM_CENTER, &x1, &y1, &value_width, &value_height);
 
-          int unit_x = value_x + (value_width / 2) + 3;
-          it.printf(value_x, 65, id(font_eco2_tvoc_values), TextAlign::BOTTOM_CENTER, "%d", (int)id(sensor_eco2).state);
+          uint32_t unit_x = value_x + (value_width / 2) + 3;
+          it.printf(value_x, 65, id(font_eco2_tvoc_values), TextAlign::BOTTOM_CENTER, "%u", (uint32_t)id(sensor_eco2).state);
           it.print(unit_x, 63, id(font6x12), TextAlign::BOTTOM_LEFT, "ppm");
 
           // ***********************************
@@ -1575,12 +1575,12 @@ display:
 
           // Get the width of the value text
           value_x = 88;
-          value_str = str_sprintf("%d", (int)id(sensor_tvoc).state);
+          value_str = str_sprintf("%u", (uint32_t)id(sensor_tvoc).state);
           it.get_text_bounds(value_x, 65, value_str.c_str(), id(font_eco2_tvoc_values),
                             TextAlign::BOTTOM_CENTER, &x1, &y1, &value_width, &value_height);
 
           unit_x = value_x + (value_width / 2) + 3;
-          it.printf(value_x, 65, id(font_eco2_tvoc_values), TextAlign::BOTTOM_CENTER, "%d", (int)id(sensor_tvoc).state);
+          it.printf(value_x, 65, id(font_eco2_tvoc_values), TextAlign::BOTTOM_CENTER, "%u", (uint32_t)id(sensor_tvoc).state);
           it.print(unit_x, 63, id(font6x12), TextAlign::BOTTOM_LEFT, "ppb");
 
       # ============================================
@@ -1633,18 +1633,18 @@ display:
           it.printf(79, 53, id(font6x12), TextAlign::TOP_LEFT, "D %.1fMb", id(mqtt_net_recv).state * 8.0f);
 
           // CPU progress bar
-          const int BAR_W = 75;
-          const int BAR_H = 9;
-          const int BAR_X = 26;
-          int BAR_Y = 1;
-          int fill_w = (int)( (smooth_cpu / 100.0f) * (BAR_W - 4) );
+          const uint32_t BAR_W = 75;
+          const uint32_t BAR_H = 9;
+          const uint32_t BAR_X = 26;
+          uint32_t BAR_Y = 1;
+          uint32_t fill_w = (uint32_t)( (smooth_cpu / 100.0f) * (BAR_W - 4) );
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
           if (fill_w > 0)
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
 
           // RAM progress bar
           BAR_Y = 14;
-          fill_w = (int)( (smooth_ram / 100.0f) * (BAR_W - 4) );
+          fill_w = (uint32_t)( (smooth_ram / 100.0f) * (BAR_W - 4) );
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
           if (fill_w > 0)
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
@@ -1673,10 +1673,8 @@ display:
           if (root["weather"][0]["icon"].is<const char*>())
             icon = root["weather"][0]["icon"].as<const char*>();
 
-          //icon = "09n"; // Debug
-
           // Draw weather icon based on OpenWeatherMap icon code
-          if (icon == "01d") it.image(icon_x, icon_y, id(icon_weather_01d));
+          /*if (icon == "01d") it.image(icon_x, icon_y, id(icon_weather_01d));
           else if (icon == "01n") it.image(icon_x, icon_y, id(icon_weather_01n));
           else if (icon == "02d") it.image(icon_x, icon_y, id(icon_weather_02d));
           else if (icon == "02n") it.image(icon_x, icon_y, id(icon_weather_02n));
@@ -1688,7 +1686,54 @@ display:
           else if (icon == "11d" || icon == "11n") it.image(icon_x, icon_y, id(icon_weather_11));
           else if (icon == "13d" || icon == "13n") it.image(icon_x, icon_y, id(icon_weather_13));
           else if (icon == "50d" || icon == "50n") it.image(icon_x, icon_y, id(icon_weather_50));
-          else if (icon == "1232n") it.image(icon_x, icon_y, id(icon_weather_1232n));
+          else if (icon == "1232n") it.image(icon_x, icon_y, id(icon_weather_1232n));*/
+
+          // Debug
+          switch ((uint32_t)id(brightness_control).state)
+          {
+            case 0:
+              it.image(icon_x, icon_y, id(icon_weather_01d));
+            break;
+            case 2:
+              it.image(icon_x, icon_y, id(icon_weather_01n));
+            break;
+            case 4:
+              it.image(icon_x, icon_y, id(icon_weather_02d));
+            break;
+            case 6:
+              it.image(icon_x, icon_y, id(icon_weather_02n));
+            break;
+            case 8:
+              it.image(icon_x, icon_y, id(icon_weather_03));
+            break;
+            case 10:
+              it.image(icon_x, icon_y, id(icon_weather_09));
+            break;
+            case 12:
+              it.image(icon_x, icon_y, id(icon_weather_10d));
+            break;
+            case 14:
+              it.image(icon_x, icon_y, id(icon_weather_10n));
+            break;
+            case 16:
+              it.image(icon_x, icon_y, id(icon_weather_11));
+            break;
+            case 18:
+              it.image(icon_x, icon_y, id(icon_weather_13));
+            break;
+            case 20:
+              it.image(icon_x, icon_y, id(icon_weather_50));
+            break;
+            case 22:
+              it.image(icon_x, icon_y, id(icon_weather_1232n));
+            break;
+
+            default:
+            break;
+          }
+
+
+
 
           // =============================================
           // City
@@ -1716,7 +1761,7 @@ display:
           // For building new ticker text
           char new_ticker[372] = "";
           char temp_buf[32];
-          int pos = 0;
+          int32_t pos = 0;
 
           // Weather Description
           if (root["weather"][0]["main"].is<const char*>())
@@ -1743,11 +1788,11 @@ display:
           }
 
           // Humidity
-          if (root["main"]["humidity"].is<int>())
+          if (root["main"]["humidity"].is<uint8_t>())
           {
             pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sHumid: %d%%", (pos > 0 ? SEPARATOR : ""),
-                            root["main"]["humidity"].as<int>());
+                            "%sHumid: %u%%", (pos > 0 ? SEPARATOR : ""),
+                            root["main"]["humidity"].as<uint8_t>());
           }
 
           // Wind Speed
@@ -1803,10 +1848,10 @@ display:
           it.printf(64, 11, id(font_number_large), TextAlign::TOP_CENTER, "%.0f%%", id(brightness_control).state);
 
           // Progress bar
-          const int BAR_W = 100, BAR_H = 10, BAR_X = 14, BAR_Y = 54;
+          const uint32_t BAR_W = 100, BAR_H = 10, BAR_X = 14, BAR_Y = 54;
           it.rectangle(BAR_X, BAR_Y, BAR_W, BAR_H);
 
-          int fill_w = (int)((id(brightness_control).state / 100.0f) * (BAR_W - 4));
+          uint32_t fill_w = (uint32_t)((id(brightness_control).state / 100.0f) * (BAR_W - 4));
           if (fill_w > 0)
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
 
@@ -1888,7 +1933,7 @@ display:
           }
 
           if (id(sensor_aqi).has_state())
-            it.printf(127, 65, id(font6x12), TextAlign::BOTTOM_RIGHT, "AQI: %d", (int)id(sensor_aqi).state);
+            it.printf(127, 65, id(font6x12), TextAlign::BOTTOM_RIGHT, "AQI: %u", (uint32_t)id(sensor_aqi).state);
           else
             it.printf(122, 65, id(font6x12), TextAlign::BOTTOM_RIGHT, "AQI: ---");
 
@@ -1914,7 +1959,7 @@ display:
           }
 
           if (id(sensor_eco2).has_state())
-            it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "eCO2: %dppm", (int)id(sensor_eco2).state);
+            it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "eCO2: %uppm", (uint32_t)id(sensor_eco2).state);
           else
             it.printf(122, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "eCO2: ---");
 
@@ -1941,7 +1986,7 @@ display:
           }
 
           if (id(sensor_tvoc).has_state())
-            it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "TVOC: %dppb", (int)id(sensor_tvoc).state);
+            it.printf(127, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "TVOC: %uppb", (uint32_t)id(sensor_tvoc).state);
           else
             it.printf(122, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "TVOC: ---");
 
@@ -2097,7 +2142,7 @@ display:
           it.printf(77, 16, id(font_ui_18_bold), TextAlign::TOP_CENTER, "required");
 
           // OK button
-          const int button_width = 41;
+          const uint32_t button_width = 41;
           it.filled_rectangle(64 - (button_width / 2), 44, button_width, 19);
           it.printf(64, 42, id(font_ui_15_bold), COLOR_OFF, TextAlign::TOP_CENTER, "OK");
 
@@ -2262,10 +2307,10 @@ graphical_display_menu:
         - type: command
           text: !lambda |-
             static char buf[32];
-            int min = id(graph_duration_minutes);
+            uint32_t min = id(graph_duration_minutes);
             if (min >= 60) {
-              int h = min / 60;
-              int m = min % 60;
+              uint32_t h = min / 60;
+              uint32_t m = min % 60;
               if (m == 0)
                 snprintf(buf, sizeof(buf), "Graph: %dh", h);
               else
@@ -2285,7 +2330,7 @@ graphical_display_menu:
         - type: command
           text: !lambda |-
             static char buf[32];
-            int sec = id(sleep_timeout_milliseconds) / 1000;
+            uint32_t sec = id(sleep_timeout_milliseconds) / 1000;
             if (sec == 0)
             {
               snprintf(buf, sizeof(buf), "Sleep Time: OFF");
@@ -2296,11 +2341,11 @@ graphical_display_menu:
             }
             else
             {
-              int min = sec / 60;
+              uint32_t min = sec / 60;
               if (min >= 60)
               {
-                int h = min / 60;
-                int m = min % 60;
+                uint32_t h = min / 60;
+                uint32_t m = min % 60;
                 if (m == 0)
                   snprintf(buf, sizeof(buf), "Sleep Time: %dh", h);
                 else
@@ -2329,25 +2374,25 @@ graphical_display_menu:
         - type: custom
           immediate_edit: false
           text: "Brightness"
-          value_lambda: 'return to_string((int)(id(display_brightness) * 100.0f)) + "%";'
+          value_lambda: 'return to_string((uint32_t)(id(display_brightness) * 100.0f)) + "%";'
           on_next:
             then:
               - lambda: |-
-                  int new_val = (int)(id(display_brightness) * 100.0f) + 10;
+                  uint32_t new_val = (uint32_t)(id(display_brightness) * 100.0f) + 10;
                   if (new_val > 100)
                     new_val = 100;
                   id(display_brightness) = (float)new_val / 100.0f;
           on_prev:
             then:
               - lambda: |-
-                  int new_val = (int)(id(display_brightness) * 100.0f) - 10;
+                  uint32_t new_val = (uint32_t)(id(display_brightness) * 100.0f) - 10;
                   if (new_val < 10)
                     new_val = 10;
                   id(display_brightness) = (float)new_val / 100.0f;
           on_value:
             then:
               - lambda: |-
-                  int val = stoi(it->get_value_text());
+                  uint32_t val = stoi(it->get_value_text());
                   id(display_brightness) = (float)val / 100.0f;
                   id(main_display).set_contrast(id(display_brightness));
                   id(config_display_brightness).publish_state(val);
@@ -2412,64 +2457,74 @@ graphical_display_menu:
         - type: command
           text: !lambda |-
             static char buf[48];
-            static float scroll_pos = 0.0;
-            static uint32_t last_scroll = 0;
-            static int scroll_delay = 0;
-            static bool scroll_forward = true;
-            const int max_visible = 17;
+            static float scroll_pos = 0.0f;
+            static uint32_t last_update = 0;
+            static uint8_t pause_counter = 0;
+            static bool scrolling_right = true;
 
-            std::string uptime_text = "Uptime: " + id(text_sensor_uptime).state;
-            int text_len = uptime_text.length();
+            const uint8_t DISPLAY_WIDTH = 17;
+            const uint8_t SCROLL_INTERVAL = 50;      // ms between scroll updates
+            const uint8_t PAUSE_AT_START = 15;       // frames to pause at beginning
+            const uint8_t PAUSE_AT_END = 20;         // frames to pause at end
+            const float SCROLL_SPEED_FWD = 0.25f;    // chars per frame going right
+            const float SCROLL_SPEED_BACK = 0.6f;    // chars per frame going left
 
-            // Only scroll if text is longer than visible area
-            if (text_len <= max_visible)
+            std::string full_text = "Uptime: " + id(text_sensor_uptime).state;
+            int16_t text_length = full_text.length();
+
+            // No scrolling needed for short text
+            if (text_length <= DISPLAY_WIDTH)
             {
-              snprintf(buf, sizeof(buf), "%s", uptime_text.c_str());
+              snprintf(buf, sizeof(buf), "%s", full_text.c_str());
               return buf;
             }
 
-            // Scroll every 50ms for smooth animation
-            if (millis() - last_scroll > 50)
+            // Update scroll position at regular intervals
+            uint32_t now = millis();
+            if (now - last_update > SCROLL_INTERVAL)
             {
-              last_scroll = millis();
+              last_update = now;
 
-              // Pause at the ends
-              if (scroll_delay > 0)
+              // Handle pause at ends
+              if (pause_counter > 0)
               {
-                scroll_delay--;
+                pause_counter--;
               }
               else
               {
-                if (scroll_forward)
+                // Scroll logic
+                int16_t max_scroll = text_length - DISPLAY_WIDTH;
+
+                if (scrolling_right)
                 {
-                  scroll_pos += 0.25;
+                  scroll_pos += SCROLL_SPEED_FWD;
 
                   // Reached the end, start going back
-                  if (scroll_pos >= text_len - max_visible)
+                  if (scroll_pos >= max_scroll)
                   {
-                    scroll_pos = text_len - max_visible;
-                    scroll_forward = false;
-                    scroll_delay = 20;  // Pause at end
+                    scroll_pos = max_scroll;
+                    scrolling_right = false;
+                    pause_counter = PAUSE_AT_END;
                   }
                 }
                 else
                 {
-                  scroll_pos -= 0.6;
+                  scroll_pos -= SCROLL_SPEED_BACK;
 
                   // Reached the beginning, start going forward
                   if (scroll_pos <= 0)
                   {
                     scroll_pos = 0;
-                    scroll_forward = true;
-                    scroll_delay = 15;  // Pause at start
+                    scrolling_right = true;
+                    pause_counter = PAUSE_AT_START;
                   }
                 }
               }
             }
 
             // Render visible part
-            int start_pos = (int)scroll_pos;
-            snprintf(buf, sizeof(buf), "%s", uptime_text.substr(start_pos, max_visible).c_str());
+            int16_t start_pos = (int16_t)scroll_pos;
+            snprintf(buf, sizeof(buf), "%s", full_text.substr(start_pos, DISPLAY_WIDTH).c_str());
             return buf;
 
 ###############################################################
@@ -2773,8 +2828,8 @@ sensor:
           else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
           {
             // Adjust sleep timeout with adaptive steps
-            int current_seconds = id(sleep_timeout_milliseconds) / 1000;
-            int step_seconds;
+            int32_t current_seconds = id(sleep_timeout_milliseconds) / 1000;
+            int32_t step_seconds;
             if (current_seconds < 60)
               step_seconds = 5;
             else if (current_seconds < 600)
@@ -2782,15 +2837,15 @@ sensor:
             else
               step_seconds = 600;
 
-            int new_val = min(current_seconds + step_seconds, 7200);
+            uint32_t new_val = min(current_seconds + step_seconds, 7200l);
             id(sleep_timeout_milliseconds) = new_val * 1000;
             id(config_auto_sleep).publish_state(new_val);
           }
           else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
           {
             // Adjust graph duration with adaptive steps
-            int current = id(graph_duration_minutes);
-            int step;
+            int32_t current = id(graph_duration_minutes);
+            int32_t step;
             if (current < 10)
               step = 1;
             else if (current < 60)
@@ -2798,8 +2853,7 @@ sensor:
             else
               step = 60;
 
-            int new_val = min(current + step, 1440);
-            id(graph_duration_minutes) = new_val;
+            id(graph_duration_minutes) = min(current + step, 1440l);
           }
           else if (id(main_display).get_active_page() == id(page_update_available))
           {
@@ -2809,9 +2863,8 @@ sensor:
           else
           {
             // Brightness adjustment (2% steps)
-            int current = id(brightness_control).state;
-            int new_val = min(current + 2, 100);
-            id(brightness_control).publish_state(new_val);
+            int32_t current = id(brightness_control).state;
+            id(brightness_control).publish_state(min(current + 2, 100l));
 
             // Save current page and switch to brightness page
             if (id(main_display).get_active_page() != id(page_brightness_control))
@@ -2844,8 +2897,8 @@ sensor:
           else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
           {
             // Adjust sleep timeout with adaptive steps
-            int current_seconds = id(sleep_timeout_milliseconds) / 1000;
-            int step_seconds;
+            int32_t current_seconds = id(sleep_timeout_milliseconds) / 1000;
+            int32_t step_seconds;
             if (current_seconds <= 60)
               step_seconds = 5;
             else if (current_seconds <= 600)
@@ -2853,15 +2906,15 @@ sensor:
             else
               step_seconds = 600;
 
-            int new_val = max(current_seconds - step_seconds, 0);
+            uint32_t new_val = max(current_seconds - step_seconds, 0l);
             id(sleep_timeout_milliseconds) = new_val * 1000;
             id(config_auto_sleep).publish_state(new_val);
           }
           else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
           {
             // Adjust graph duration with adaptive steps
-            int current = id(graph_duration_minutes);
-            int step;
+            int32_t current = id(graph_duration_minutes);
+            int32_t step;
             if (current <= 10)
               step = 1;
             else if (current <= 60)
@@ -2869,8 +2922,7 @@ sensor:
             else
               step = 60;
 
-            int new_val = max(current - step, 1);
-            id(graph_duration_minutes) = new_val;
+            id(graph_duration_minutes) = max(current - step, 1l);
           }
           else if (id(main_display).get_active_page() == id(page_update_available))
           {
@@ -2880,9 +2932,8 @@ sensor:
           else
           {
             // Brightness adjustment (2% steps)
-            int current = id(brightness_control).state;
-            int new_val = max(current - 2, 0);
-            id(brightness_control).publish_state(new_val);
+            int32_t current = id(brightness_control).state;
+            id(brightness_control).publish_state(max(current - 2, 0l));
 
             // Save current page and switch to brightness page
             if (id(main_display).get_active_page() != id(page_brightness_control))
@@ -3031,7 +3082,7 @@ text_sensor:
     icon: mdi:chemical-weapon
     update_interval: 1s
     lambda: |-
-      switch ((int)(id(sensor_aqi).state))
+      switch ((uint32_t)(id(sensor_aqi).state))
       {
           case 1: return {"Excellent"};
           case 2: return {"Good"};
