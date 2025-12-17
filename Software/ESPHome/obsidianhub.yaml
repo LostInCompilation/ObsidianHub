@@ -485,10 +485,10 @@ font:
   # Testing
   - file:
       type: gfonts
-      family: Roboto
-      weight: 600
+      family: Comfortaa
+      weight: 700
     id: font_weather_temp
-    size: 25
+    size: 23
     glyphs: ".-°C0123456789"
 
   # --- Digital Clock Display ---
@@ -529,7 +529,7 @@ font:
   # --- Diverse Elements ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13.bdf"
     id: font7x13
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/|-0123456789\u0025"
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13B.bdf"
     id: font7x13B
@@ -537,7 +537,7 @@ font:
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/-0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/|-0123456789\u0025"
 
   # --- Headers ---
   - file:
@@ -1656,24 +1656,19 @@ display:
         lambda: |-
           if (id(weather_json_doc).isNull())
           {
-            // No data yet
-            it.printf(64, 17, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Loading Weather");
-            it.printf(64, 33, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Data...");
-
+            // No weather data yet
+            it.printf(64, 12, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Loading Weather");
+            it.printf(64, 32, id(font_ui_15_bold), TextAlign::TOP_CENTER, "Data...");
             return;
           }
 
           static JsonObject root = id(weather_json_doc).as<JsonObject>();
 
           // =============================================
-          // City
-          if (root["name"].is<const char*>())
-            it.printf(64, -2, id(font6x12), TextAlign::TOP_CENTER, "%s", root["name"].as<const char*>());
-
-          // =============================================
           // Icon
-          const uint8_t icon_x = 0;
-          const uint8_t icon_y = 7;
+          const uint8_t icon_x = 10;
+          const uint8_t icon_y = 10;
+          const uint8_t description_offset_y = 7;
           static std::string icon = "";
 
           if (root["weather"][0]["icon"].is<const char*>())
@@ -1697,36 +1692,129 @@ display:
           else if (icon == "1232n") it.image(icon_x, icon_y, id(icon_weather_1232n));
 
           // =============================================
-          // Description
-          if (root["weather"][0]["main"].is<const char*>())
-            it.printf(20, 40, id(font6x12), TextAlign::TOP_CENTER, "%s", root["weather"][0]["main"].as<const char*>());
+          // City
+          if (root["name"].is<const char*>())
+            it.printf(64, -2, id(font6x12), TextAlign::TOP_CENTER, "%s", root["name"].as<const char*>());
 
           // =============================================
           // Temperature
           if (root["main"]["temp"].is<float>())
-            it.printf(85, 5, id(font_weather_temp), TextAlign::TOP_CENTER, "%.1f°C", root["main"]["temp"].as<float>());
+            it.printf(102, 7, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
 
           // =============================================
-          // Min/Max Temperature
-          if (root["main"]["temp_min"].is<float>())
-            it.printf(80, 40, id(font6x12), TextAlign::TOP_CENTER, "%.0f°C", root["main"]["temp_min"].as<float>());
-          if (root["main"]["temp_max"].is<float>())
-            it.printf(105, 40, id(font6x12), TextAlign::TOP_CENTER, "%.0f°C", root["main"]["temp_max"].as<float>());
-
+          // TICKER
           // =============================================
+          const int32_t SCROLL_INTERVAL = 50;
+          const int32_t SCROLL_STEP = 1;
+          const int32_t TICKER_Y = 65;
+          const char* SEPARATOR = "  |  ";
+
+          static int32_t ticker_offset = 128; // Start position
+          static int32_t ticker_width = 0;
+          static int32_t last_scroll_time = 0;
+          static char ticker_text[372] = "";
+
+          // For building new ticker text
+          char new_ticker[372] = "";
+          char temp_buf[32];
+          int pos = 0;
+
           // Humidity
-          it.print(1, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "HUMID");
           if (root["main"]["humidity"].is<int>())
-            it.printf(35, 64, id(font7x13), TextAlign::BOTTOM_LEFT, "%d%%", root["main"]["humidity"].as<int>());
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sHumid: %d%%", (pos > 0 ? " | " : ""),
+                            root["main"]["humidity"].as<int>());
+          }
 
           // Wind Speed
-          it.print(70, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "WIND");
           if (root["wind"]["speed"].is<float>())
           {
-            float wind_kmh = root["wind"]["speed"].as<float>() * 3.6f;
-            it.printf(90, 64, id(font7x13), TextAlign::BOTTOM_LEFT, "%.0f", wind_kmh);
-            it.print(110, 64, id(font6x12), TextAlign::BOTTOM_LEFT, "km/h");
+            const float wind_kmh = root["wind"]["speed"].as<float>() * 3.6f;
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sWind: %dkm/h", (pos > 0 ? " | " : ""),
+                            lround(wind_kmh));
           }
+
+          // Feels Like Temperature
+          if (root["main"]["feels_like"].is<float>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sFeels: %d°C", (pos > 0 ? " | " : ""),
+                            lround(root["main"]["feels_like"].as<float>()));
+          }
+
+          // Min Temperature
+          if (root["main"]["temp_min"].is<float>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sMin: %d°C", (pos > 0 ? " | " : ""),
+                            lround(root["main"]["temp_min"].as<float>()));
+          }
+
+          // Max Temperature
+          if (root["main"]["temp_max"].is<float>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sMax: %d°C", (pos > 0 ? " | " : ""),
+                            lround(root["main"]["temp_max"].as<float>()));
+          }
+
+          // Pressure
+          if (root["main"]["pressure"].is<int>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sPressure: %dhPa", (pos > 0 ? " | " : ""),
+                            root["main"]["pressure"].as<int>());
+          }
+
+          // Visibility
+          if (root["visibility"].is<int>())
+          {
+            const float visibility_km = root["visibility"].as<int>() / 1000.0f;
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sVisibility: %.1fkm", (pos > 0 ? " | " : ""),
+                            visibility_km);
+          }
+
+          // Weather Description
+          if (root["weather"][0]["main"].is<const char*>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%s%s", (pos > 0 ? " | " : ""),
+                            root["weather"][0]["main"].as<const char*>());
+          }
+
+          // Add padding at the end
+          snprintf(new_ticker + pos, sizeof(new_ticker) - pos, "      ");
+
+          // Update ticker if text changed
+          if (strcmp(new_ticker, ticker_text) != 0)
+          {
+            strcpy(ticker_text, new_ticker);
+
+            int bx, by, bw, bh;
+            it.get_text_bounds(0, TICKER_Y, ticker_text, id(font7x13),
+                              TextAlign::BOTTOM_LEFT, &bx, &by, &bw, &bh);
+
+            ticker_width = bw;
+          }
+
+          // Update scroll position
+          uint32_t current_time = millis();
+          if (current_time - last_scroll_time >= SCROLL_INTERVAL)
+          {
+            ticker_offset -= SCROLL_STEP;
+            last_scroll_time = current_time;
+
+            // Reset position for looping
+            if (ticker_offset <= -ticker_width)
+              ticker_offset = 0;
+          }
+
+          // Draw ticker (both copies for endless scrolling)
+          it.print(ticker_offset, TICKER_Y, id(font7x13), TextAlign::BOTTOM_LEFT, ticker_text);
+          it.print(ticker_offset + ticker_width, TICKER_Y, id(font7x13), TextAlign::BOTTOM_LEFT, ticker_text);
 
       # ============================================
       # BRIGHTNESS CONTROL: Shows percentage with progress bar
@@ -3008,6 +3096,10 @@ binary_sensor:
       - delayed_on: 10ms  # Debounce
     on_press:
       - script.execute: wake_display_and_reset_timer
+      # Debug
+      - script.execute: fetch_location
+      - script.wait: fetch_location
+      - script.execute: fetch_weather
 
   # Rotary encoder push button
   - platform: gpio
