@@ -15,7 +15,7 @@
 # - Brightness sync on boot fix
 # - Graph range and grid
 # - Graph show min max values
-# Update available later button
+# - Use new wifi ap enabled check for determinig if in ap mode: https://github.com/esphome/esphome/pull/11852
 
 ###############################################################
 # Substitutions
@@ -482,15 +482,6 @@ globals:
 # Fonts
 ###############################################################
 font:
-  # Testing
-  - file:
-      type: gfonts
-      family: Comfortaa
-      weight: 700
-    id: font_weather_temp
-    size: 23
-    glyphs: ".-°C0123456789"
-
   # --- Digital Clock Display ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/advanced_dot_digital.ttf"
     id: font_clock_large
@@ -526,10 +517,20 @@ font:
     id: font_eco2_tvoc_values
     glyphs: "0123456789pmb"
 
+  # --- Weather Dashboard ---
+  - file:
+      type: gfonts
+      #family: Google Sans
+      family: Chiron GoRound TC
+      weight: 600
+    id: font_weather_temp
+    size: 27
+    glyphs: ".-°C0123456789"
+
   # --- Diverse Elements ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13.bdf"
     id: font7x13
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/|-0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:0123456789\u0025"
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13B.bdf"
     id: font7x13B
@@ -1666,9 +1667,8 @@ display:
 
           // =============================================
           // Icon
-          const uint8_t icon_x = 10;
-          const uint8_t icon_y = 10;
-          const uint8_t description_offset_y = 7;
+          const uint8_t icon_x = 9;
+          const uint8_t icon_y = 8;
           static std::string icon = "";
 
           if (root["weather"][0]["icon"].is<const char*>())
@@ -1699,14 +1699,14 @@ display:
           // =============================================
           // Temperature
           if (root["main"]["temp"].is<float>())
-            it.printf(102, 7, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
+            it.printf(95, 10, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
 
           // =============================================
           // TICKER
           // =============================================
-          const int32_t SCROLL_INTERVAL = 50;
+          const int32_t SCROLL_INTERVAL = 45;
           const int32_t SCROLL_STEP = 1;
-          const int32_t TICKER_Y = 65;
+          const int32_t TICKER_Y = 63;
           const char* SEPARATOR = "  |  ";
 
           static int32_t ticker_offset = 128; // Start position
@@ -1719,11 +1719,19 @@ display:
           char temp_buf[32];
           int pos = 0;
 
+          // Weather Description
+          if (root["weather"][0]["main"].is<const char*>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%s%s", (pos > 0 ? SEPARATOR : ""),
+                            root["weather"][0]["main"].as<const char*>());
+          }
+
           // Humidity
           if (root["main"]["humidity"].is<int>())
           {
             pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sHumid: %d%%", (pos > 0 ? " | " : ""),
+                            "%sHumid: %d%%", (pos > 0 ? SEPARATOR : ""),
                             root["main"]["humidity"].as<int>());
           }
 
@@ -1732,23 +1740,15 @@ display:
           {
             const float wind_kmh = root["wind"]["speed"].as<float>() * 3.6f;
             pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sWind: %dkm/h", (pos > 0 ? " | " : ""),
+                            "%sWind: %dkm/h", (pos > 0 ? SEPARATOR : ""),
                             lround(wind_kmh));
-          }
-
-          // Feels Like Temperature
-          if (root["main"]["feels_like"].is<float>())
-          {
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sFeels: %d°C", (pos > 0 ? " | " : ""),
-                            lround(root["main"]["feels_like"].as<float>()));
           }
 
           // Min Temperature
           if (root["main"]["temp_min"].is<float>())
           {
             pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sMin: %d°C", (pos > 0 ? " | " : ""),
+                            "%sLow: %d°C", (pos > 0 ? SEPARATOR : ""),
                             lround(root["main"]["temp_min"].as<float>()));
           }
 
@@ -1756,37 +1756,12 @@ display:
           if (root["main"]["temp_max"].is<float>())
           {
             pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sMax: %d°C", (pos > 0 ? " | " : ""),
+                            "%sHigh: %d°C", (pos > 0 ? SEPARATOR : ""),
                             lround(root["main"]["temp_max"].as<float>()));
           }
 
-          // Pressure
-          if (root["main"]["pressure"].is<int>())
-          {
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sPressure: %dhPa", (pos > 0 ? " | " : ""),
-                            root["main"]["pressure"].as<int>());
-          }
-
-          // Visibility
-          if (root["visibility"].is<int>())
-          {
-            const float visibility_km = root["visibility"].as<int>() / 1000.0f;
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sVisibility: %.1fkm", (pos > 0 ? " | " : ""),
-                            visibility_km);
-          }
-
-          // Weather Description
-          if (root["weather"][0]["main"].is<const char*>())
-          {
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%s%s", (pos > 0 ? " | " : ""),
-                            root["weather"][0]["main"].as<const char*>());
-          }
-
           // Add padding at the end
-          snprintf(new_ticker + pos, sizeof(new_ticker) - pos, "      ");
+          snprintf(new_ticker + pos, sizeof(new_ticker) - pos, "        ");
 
           // Update ticker if text changed
           if (strcmp(new_ticker, ticker_text) != 0)
@@ -1794,7 +1769,7 @@ display:
             strcpy(ticker_text, new_ticker);
 
             int bx, by, bw, bh;
-            it.get_text_bounds(0, TICKER_Y, ticker_text, id(font7x13),
+            it.get_text_bounds(0, TICKER_Y, ticker_text, id(font6x12),
                               TextAlign::BOTTOM_LEFT, &bx, &by, &bw, &bh);
 
             ticker_width = bw;
@@ -1813,8 +1788,8 @@ display:
           }
 
           // Draw ticker (both copies for endless scrolling)
-          it.print(ticker_offset, TICKER_Y, id(font7x13), TextAlign::BOTTOM_LEFT, ticker_text);
-          it.print(ticker_offset + ticker_width, TICKER_Y, id(font7x13), TextAlign::BOTTOM_LEFT, ticker_text);
+          it.print(ticker_offset, TICKER_Y, id(font6x12), TextAlign::BOTTOM_LEFT, ticker_text);
+          it.print(ticker_offset + ticker_width, TICKER_Y, id(font6x12), TextAlign::BOTTOM_LEFT, ticker_text);
 
       # ============================================
       # BRIGHTNESS CONTROL: Shows percentage with progress bar

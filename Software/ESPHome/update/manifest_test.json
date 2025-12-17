@@ -1,13 +1,13 @@
 {
-  "name": "ObsidianHub",
-  "version": "1.0.5",
-  "builds": [
-    {
-      "chipFamily": "ESP32-C3",
-      "ota": {
-        "md5": "6fddb8a07a74cc3969197499f6926c20",
-        "path": "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/obsidianhub.ota.bin"
-      }
-    }
-  ]
+    "name": "ObsidianHub",
+    "version": "1.0.5",
+    "builds": [
+        {
+            "chipFamily": "ESP32-C3",
+            "ota": {
+                "md5": "6fddb8a07a74cc3969197499f6926c20",
+                "path": "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/obsidianhub.ota.bin"
+            }
+        }
+    ]
 }
