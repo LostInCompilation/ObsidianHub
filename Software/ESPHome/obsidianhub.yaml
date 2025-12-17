@@ -206,32 +206,14 @@ update:
   - platform: http_request
     name: "Firmware Update"
     id: update_firmware_component_http
+    source: "${url_update_manifest}"
     update_interval: 10min
     device_class: "firmware"
     entity_category: "config"
     internal: true
-    source: "${url_update_manifest}"
     on_update_available:
       then:
-        - lambda: |-
-            if (id(main_display).get_active_page() != id(page_update_available))
-            {
-              id(return_to_last_saved_page_with_delay).stop();
-
-              // Show update available page
-              id(is_menu_detail_visible) = false;
-              id(is_menu_visible) = false;
-
-              id(main_display).show_page(id(page_update_available));
-              id(wake_display_and_reset_timer).execute();
-
-              // Status LEDs
-              auto call = id(led_status).turn_on();
-              call.set_effect("Turquoise Pulse");
-              call.set_rgb(0.0f, 1.0f, 0.85f);
-              call.set_brightness(0.8f);
-              call.perform();
-            }
+        - script.execute: show_update_available
 
 ###############################################################
 # WiFi Configuration
@@ -821,6 +803,29 @@ script:
 
           id(wake_display_and_reset_timer).execute();
 
+  # Show update available page & LED
+  - id: show_update_available
+    then:
+      - lambda: |-
+          if (id(main_display).get_active_page() != id(page_update_available))
+          {
+            id(return_to_last_saved_page_with_delay).stop();
+
+            // Show update available page
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
+
+            id(main_display).show_page(id(page_update_available));
+            id(wake_display_and_reset_timer).execute();
+
+            // Status LEDs
+            auto call = id(led_status).turn_on();
+            call.set_effect("Turquoise Pulse");
+            call.set_rgb(0.0f, 1.0f, 0.85f);
+            call.set_brightness(0.8f);
+            call.perform();
+          }
+
   # Update all graph durations and grid spacing
   - id: update_graph_durations
     then:
@@ -990,6 +995,15 @@ script:
 # Intervals (Periodic Tasks)
 ###############################################################
 interval:
+  # Reshow update available page if user pressed "Later"
+  - interval: 1min
+    then:
+      - if:
+          condition:
+            - update.is_available: update_firmware_component_http
+          then:
+            - script.execute: show_update_available
+
   # Update boot animation frames
   - interval: 12ms
     then:
@@ -1746,8 +1760,8 @@ display:
 
           // =============================================
           // City
-          if (root["name"].is<const char*>())
-            it.printf(64, -2, id(font6x12), TextAlign::TOP_CENTER, "%s", root["name"].as<const char*>());
+          //if (root["name"].is<const char*>())
+          //  it.printf(64, -2, id(font6x12), TextAlign::TOP_CENTER, "%s", root["name"].as<const char*>());
 
           // =============================================
           // Temperature
@@ -1771,6 +1785,14 @@ display:
           char new_ticker[372] = "";
           char temp_buf[32];
           int32_t pos = 0;
+
+          // City
+          if (root["name"].is<const char*>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%s%s", (pos > 0 ? SEPARATOR : ""),
+                            root["name"].as<const char*>());
+          }
 
           // Weather Description
           if (root["weather"][0]["main"].is<const char*>())
