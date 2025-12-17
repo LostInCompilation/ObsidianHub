@@ -105,26 +105,27 @@ api:
   encryption:
     key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
 
+  # Debug
   # on_client_connected:
-  #   # Debug
-  #   - delay: 500ms
-  #   - lambda: |-
-  #       ESP_LOGI("brightness", "HA connected — performing brightness sync");
+  #   then:
+  #     - delay: 500ms
+  #     - lambda: |-
+  #         ESP_LOGI("brightness", "HA connected — performing brightness sync");
 
-  #       id(brightness_sync_boot).call();
+  #         id(brightness_sync_boot).call();
 
-  #       if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
-  #       {
-  #         ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
-  #         return;
-  #       }
+  #         if (!id(brightness_sync_boot).has_state() || std::isnan(id(brightness_sync_boot).state) || id(brightness_sync_boot).state > 255 || id(brightness_sync_boot).state < 0)
+  #         {
+  #           ESP_LOGW("brightness", "brightness_sync_boot.state is invalid. Ignoring sync in on_client_connected");
+  #           return;
+  #         }
 
-  #       float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
-  #       uint32_t pct = clamp((int)lround(tmp), 0, 100);
+  #         float tmp = (id(brightness_sync_boot).state / 255.0f) * 100.0f;
+  #         uint32_t pct = clamp((int)lround(tmp), 0, 100);
 
-  #       ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
+  #         ESP_LOGI("brightness", "Sync brightness = %d%%", pct);
 
-  #       id(brightness_control).publish_state(pct);
+  #         id(brightness_control).publish_state(pct);
 
 ###############################################################
 # HTTP Requests
@@ -228,27 +229,29 @@ wifi:
   id: wifi_component
 
   on_connect:
-    - lambda: |-
-        if (!id(wifi_has_been_setup_by_user) || id(main_display).get_active_page() == id(page_wifi_ap_mode))
-        {
-          // Show dashboard and set status LED to green
-          id(is_menu_detail_visible) = false;
-          id(is_menu_visible) = false;
+    then:
+      - lambda: |-
+          if (!id(wifi_has_been_setup_by_user) || id(main_display).get_active_page() == id(page_wifi_ap_mode))
+          {
+            // Show dashboard and set status LED to green
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
 
-          id(main_display).show_page(id(page_main_dashboard));
-          id(wake_display_and_reset_timer).execute();
+            id(main_display).show_page(id(page_main_dashboard));
+            id(wake_display_and_reset_timer).execute();
 
-          auto call = id(led_status).turn_on();
-          call.set_effect("None");
-          call.set_rgb(0.0f, 1.0f, 0.0f);
-          call.set_brightness(0.8f);
-          call.perform();
-        }
+            auto call = id(led_status).turn_on();
+            call.set_effect("None");
+            call.set_rgb(0.0f, 1.0f, 0.0f);
+            call.set_brightness(0.8f);
+            call.perform();
+          }
 
-        id(wifi_has_been_setup_by_user) = true;
+          id(wifi_has_been_setup_by_user) = true;
   on_disconnect:
-    - lambda: |-
-        id(wake_display_and_reset_timer).execute();
+    then:
+      - lambda: |-
+          id(wake_display_and_reset_timer).execute();
 
   # Fallback access point for initial setup or connection failures
   ap:
@@ -807,6 +810,8 @@ script:
   - id: show_update_available
     then:
       - lambda: |-
+          ESP_LOGI("show_update_available", "show_update_available CALLED");
+
           if (id(main_display).get_active_page() != id(page_update_available))
           {
             id(return_to_last_saved_page_with_delay).stop();
@@ -996,7 +1001,8 @@ script:
 ###############################################################
 interval:
   # Reshow update available page if user pressed "Later"
-  - interval: 1min
+  - interval: 30s
+    startup_delay: 10s
     then:
       - if:
           condition:
@@ -1330,7 +1336,8 @@ display:
 
     # Force immediate redraw when switching pages
     on_page_change:
-      - component.update: main_display
+      then:
+        - component.update: main_display
 
     pages:
       # ============================================
@@ -2844,142 +2851,144 @@ sensor:
     resolution: 1
     internal: true
     on_clockwise:
-      - lambda: |-
-          // Do nothing if still booting
-          if (!id(is_boot_complete))
-            return;
+      then:
+        - lambda: |-
+            // Do nothing if still booting
+            if (!id(is_boot_complete))
+              return;
 
-          // Ignore encoder rotation
-          if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
-              || id(main_display).get_active_page() == id(page_is_restarting)
-              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_updating))
-            return;
+            // Ignore encoder rotation
+            if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
+                || id(main_display).get_active_page() == id(page_is_restarting)
+                || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+                || id(main_display).get_active_page() == id(page_is_updating))
+              return;
 
-          if (id(is_menu_visible))
-          {
-            id(main_menu).down();
-          }
-          else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
-          {
-            // Adjust sleep timeout with adaptive steps
-            int32_t current_seconds = id(sleep_timeout_milliseconds) / 1000;
-            int32_t step_seconds;
-            if (current_seconds < 60)
-              step_seconds = 5;
-            else if (current_seconds < 600)
-              step_seconds = 60;
+            if (id(is_menu_visible))
+            {
+              id(main_menu).down();
+            }
+            else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
+            {
+              // Adjust sleep timeout with adaptive steps
+              int32_t current_seconds = id(sleep_timeout_milliseconds) / 1000;
+              int32_t step_seconds;
+              if (current_seconds < 60)
+                step_seconds = 5;
+              else if (current_seconds < 600)
+                step_seconds = 60;
+              else
+                step_seconds = 600;
+
+              uint32_t new_val = min(current_seconds + step_seconds, 7200l);
+              id(sleep_timeout_milliseconds) = new_val * 1000;
+              id(config_auto_sleep).publish_state(new_val);
+            }
+            else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
+            {
+              // Adjust graph duration with adaptive steps
+              int32_t current = id(graph_duration_minutes);
+              int32_t step;
+              if (current < 10)
+                step = 1;
+              else if (current < 60)
+                step = 10;
+              else
+                step = 60;
+
+              id(graph_duration_minutes) = min(current + step, 1440l);
+            }
+            else if (id(main_display).get_active_page() == id(page_update_available))
+            {
+              // Select button on update available page
+              id(update_available_page_selected_button) = (id(update_available_page_selected_button) + 1) % 2;
+            }
             else
-              step_seconds = 600;
+            {
+              // Brightness adjustment (2% steps)
+              int32_t current = id(brightness_control).state;
+              id(brightness_control).publish_state(min(current + 2, 100l));
 
-            uint32_t new_val = min(current_seconds + step_seconds, 7200l);
-            id(sleep_timeout_milliseconds) = new_val * 1000;
-            id(config_auto_sleep).publish_state(new_val);
-          }
-          else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
-          {
-            // Adjust graph duration with adaptive steps
-            int32_t current = id(graph_duration_minutes);
-            int32_t step;
-            if (current < 10)
-              step = 1;
-            else if (current < 60)
-              step = 10;
-            else
-              step = 60;
+              // Save current page and switch to brightness page
+              if (id(main_display).get_active_page() != id(page_brightness_control))
+                id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
 
-            id(graph_duration_minutes) = min(current + step, 1440l);
-          }
-          else if (id(main_display).get_active_page() == id(page_update_available))
-          {
-            // Select button on update available page
-            id(update_available_page_selected_button) = (id(update_available_page_selected_button) + 1) % 2;
-          }
-          else
-          {
-            // Brightness adjustment (2% steps)
-            int32_t current = id(brightness_control).state;
-            id(brightness_control).publish_state(min(current + 2, 100l));
+              id(main_display).show_page(id(page_brightness_control));
+              id(return_to_last_saved_page_with_delay).stop();
+              id(return_to_last_saved_page_with_delay).execute();
+            }
 
-            // Save current page and switch to brightness page
-            if (id(main_display).get_active_page() != id(page_brightness_control))
-              id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
-
-            id(main_display).show_page(id(page_brightness_control));
-            id(return_to_last_saved_page_with_delay).stop();
-            id(return_to_last_saved_page_with_delay).execute();
-          }
-
-          id(wake_display_and_reset_timer).execute();
+            id(wake_display_and_reset_timer).execute();
 
     on_anticlockwise:
-      - lambda: |-
-          // Do nothing if still booting
-          if (!id(is_boot_complete))
-            return;
+      then:
+        - lambda: |-
+            // Do nothing if still booting
+            if (!id(is_boot_complete))
+              return;
 
-          // Ignore encoder rotation on restart page or WiFi AP mode page
-          if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
-              || id(main_display).get_active_page() == id(page_is_restarting)
-              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_updating))
-            return;
+            // Ignore encoder rotation on restart page or WiFi AP mode page
+            if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
+                || id(main_display).get_active_page() == id(page_is_restarting)
+                || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+                || id(main_display).get_active_page() == id(page_is_updating))
+              return;
 
-          if (id(is_menu_visible))
-          {
-            id(main_menu).up();
-          }
-          else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
-          {
-            // Adjust sleep timeout with adaptive steps
-            int32_t current_seconds = id(sleep_timeout_milliseconds) / 1000;
-            int32_t step_seconds;
-            if (current_seconds <= 60)
-              step_seconds = 5;
-            else if (current_seconds <= 600)
-              step_seconds = 60;
+            if (id(is_menu_visible))
+            {
+              id(main_menu).up();
+            }
+            else if (id(main_display).get_active_page() == id(page_menu_sleep_config))
+            {
+              // Adjust sleep timeout with adaptive steps
+              int32_t current_seconds = id(sleep_timeout_milliseconds) / 1000;
+              int32_t step_seconds;
+              if (current_seconds <= 60)
+                step_seconds = 5;
+              else if (current_seconds <= 600)
+                step_seconds = 60;
+              else
+                step_seconds = 600;
+
+              uint32_t new_val = max(current_seconds - step_seconds, 0l);
+              id(sleep_timeout_milliseconds) = new_val * 1000;
+              id(config_auto_sleep).publish_state(new_val);
+            }
+            else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
+            {
+              // Adjust graph duration with adaptive steps
+              int32_t current = id(graph_duration_minutes);
+              int32_t step;
+              if (current <= 10)
+                step = 1;
+              else if (current <= 60)
+                step = 10;
+              else
+                step = 60;
+
+              id(graph_duration_minutes) = max(current - step, 1l);
+            }
+            else if (id(main_display).get_active_page() == id(page_update_available))
+            {
+              // Select button on update available page
+              id(update_available_page_selected_button) = (id(update_available_page_selected_button) + 1) % 2;
+            }
             else
-              step_seconds = 600;
+            {
+              // Brightness adjustment (2% steps)
+              int32_t current = id(brightness_control).state;
+              id(brightness_control).publish_state(max(current - 2, 0l));
 
-            uint32_t new_val = max(current_seconds - step_seconds, 0l);
-            id(sleep_timeout_milliseconds) = new_val * 1000;
-            id(config_auto_sleep).publish_state(new_val);
-          }
-          else if (id(main_display).get_active_page() == id(page_menu_graph_duration))
-          {
-            // Adjust graph duration with adaptive steps
-            int32_t current = id(graph_duration_minutes);
-            int32_t step;
-            if (current <= 10)
-              step = 1;
-            else if (current <= 60)
-              step = 10;
-            else
-              step = 60;
+              // Save current page and switch to brightness page
+              if (id(main_display).get_active_page() != id(page_brightness_control))
+                id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
 
-            id(graph_duration_minutes) = max(current - step, 1l);
-          }
-          else if (id(main_display).get_active_page() == id(page_update_available))
-          {
-            // Select button on update available page
-            id(update_available_page_selected_button) = (id(update_available_page_selected_button) + 1) % 2;
-          }
-          else
-          {
-            // Brightness adjustment (2% steps)
-            int32_t current = id(brightness_control).state;
-            id(brightness_control).publish_state(max(current - 2, 0l));
+              id(main_display).show_page(id(page_brightness_control));
+              id(return_to_last_saved_page_with_delay).stop();
+              id(return_to_last_saved_page_with_delay).execute();
+            }
 
-            // Save current page and switch to brightness page
-            if (id(main_display).get_active_page() != id(page_brightness_control))
-              id(last_saved_page) = const_cast<esphome::display::DisplayPage*>(id(main_display).get_active_page());
-
-            id(main_display).show_page(id(page_brightness_control));
-            id(return_to_last_saved_page_with_delay).stop();
-            id(return_to_last_saved_page_with_delay).execute();
-          }
-
-          id(wake_display_and_reset_timer).execute();
+            id(wake_display_and_reset_timer).execute();
 
   # --- MQTT System Monitor ---
 
@@ -3142,7 +3151,8 @@ binary_sensor:
     filters:
       - delayed_on: 10ms  # Debounce
     on_press:
-      - script.execute: wake_display_and_reset_timer
+      then:
+        - script.execute: wake_display_and_reset_timer
 
   # Right tactile button
   - platform: gpio
@@ -3155,7 +3165,8 @@ binary_sensor:
     filters:
       - delayed_on: 10ms  # Debounce
     on_press:
-      - script.execute: wake_display_and_reset_timer
+      then:
+        - script.execute: wake_display_and_reset_timer
 
   # Rotary encoder push button
   - platform: gpio
@@ -3169,25 +3180,26 @@ binary_sensor:
       - delayed_on: 10ms  # Debounce
     # On button down
     on_press:
-      - lambda: |-
-          // Do nothing if still booting, on WiFi AP mode page, update (available) page or restart page
-          if (!id(is_boot_complete)
-              || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
-              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-              || id(main_display).get_active_page() == id(page_is_restarting)
-              || id(main_display).get_active_page() == id(page_is_updating)
-              || id(main_display).get_active_page() == id(page_update_available))
-            return;
+      then:
+        - lambda: |-
+            // Do nothing if still booting, on WiFi AP mode page, update (available) page or restart page
+            if (!id(is_boot_complete)
+                || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
+                || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+                || id(main_display).get_active_page() == id(page_is_restarting)
+                || id(main_display).get_active_page() == id(page_is_updating)
+                || id(main_display).get_active_page() == id(page_update_available))
+              return;
 
-          // Only ignore next short press if display is asleep
-          // (not just fading out into sleep or only LEDs sleeping)
-          if (id(is_display_sleeping))
-            id(ignore_next_encoder_button_press_after_wake_up) = true;
+            // Only ignore next short press if display is asleep
+            // (not just fading out into sleep or only LEDs sleeping)
+            if (id(is_display_sleeping))
+              id(ignore_next_encoder_button_press_after_wake_up) = true;
 
-          // Wake immediately when button is pressed down and check for long press
-          id(wake_display_and_reset_timer).execute();
-          id(check_for_long_press).stop();
-          id(check_for_long_press).execute();
+            // Wake immediately when button is pressed down and check for long press
+            id(wake_display_and_reset_timer).execute();
+            id(check_for_long_press).stop();
+            id(check_for_long_press).execute();
     # Short press (button released again)
     on_click:
       - min_length: 2ms
@@ -3246,7 +3258,10 @@ binary_sensor:
 
                 // Force save preferences to flash immediately
                 global_preferences->sync();
-                delay(1000);
+                delay(1500);
+
+                id(main_display).clear();
+                id(main_display).update();
 
                 App.safe_reboot();
 
@@ -3291,22 +3306,24 @@ button:
     icon: mdi:restart
     entity_category: "config"
     on_press:
-      - lambda: |-
-          id(return_to_last_saved_page_with_delay).stop();
+      then:
+        - lambda: |-
+            id(return_to_last_saved_page_with_delay).stop();
 
-          // Show "Restarting..." page
-          id(is_menu_detail_visible) = false;
-          id(is_menu_visible) = false;
+            // Show "Restarting..." page
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
 
-          id(main_display).show_page(id(page_is_restarting));
-          id(wake_display_and_reset_timer).execute();
+            id(main_display).show_page(id(page_is_restarting));
+            id(wake_display_and_reset_timer).execute();
 
-          // Force save preferences to flash immediately
-          global_preferences->sync();
-      - delay: 2s
-      - lambda: |-
-          id(main_display).set_contrast(0.0f);
-          App.safe_reboot();
+            // Force save preferences to flash immediately
+            global_preferences->sync();
+        - delay: 2s
+        - lambda: |-
+            id(main_display).clear();
+            id(main_display).update();
+            App.safe_reboot();
 
   # Shutdown
   #- platform: shutdown
@@ -3318,21 +3335,23 @@ button:
     icon: mdi:cog
     entity_category: "config"
     on_press:
-      - lambda: |-
-          id(return_to_last_saved_page_with_delay).stop();
+      then:
+        - lambda: |-
+            id(return_to_last_saved_page_with_delay).stop();
 
-          // Show "Restarting..." page
-          id(is_menu_detail_visible) = false;
-          id(is_menu_visible) = false;
+            // Show "Restarting..." page
+            id(is_menu_detail_visible) = false;
+            id(is_menu_visible) = false;
 
-          id(main_display).show_page(id(page_is_restarting));
-          id(wake_display_and_reset_timer).execute();
+            id(main_display).show_page(id(page_is_restarting));
+            id(wake_display_and_reset_timer).execute();
 
-          global_preferences->reset();
-      - delay: 2s
-      - lambda: |-
-          id(main_display).set_contrast(0.0f);
-          App.safe_reboot();
+            global_preferences->reset();
+        - delay: 2s
+        - lambda: |-
+            id(main_display).clear();
+            id(main_display).update();
+            App.safe_reboot();
 
 ###############################################################
 # Configuration Switches
