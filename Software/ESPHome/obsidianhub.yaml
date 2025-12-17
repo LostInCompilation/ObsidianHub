@@ -10,12 +10,10 @@
 ###############################################################
 
 # ToDo:
-# - Weather station dashboard
 # - Brightness sync on boot fix
 # - Graph range and grid
 # - Graph show min max values
 # - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
-# - subst. (compile switch) for disable system monitor page
 
 ###############################################################
 # Substitutions
@@ -23,7 +21,7 @@
 substitutions:
   # ----------------------------------
   # Firmware Version
-  version: "1.0.4"
+  version: "1.1.0"
 
   # ----------------------------------
   # Firmware Update URL
@@ -1083,7 +1081,7 @@ interval:
                 }
 
   # Update Weather Data
-  - interval: 15min
+  - interval: 10min
     startup_delay: 60s
     then:
       - if:
@@ -1178,7 +1176,7 @@ interval:
   - interval: 75ms
     then:
       - lambda: |-
-          static const uint32_t BOOT_LOGO_HOLD_MS = 3800;
+          static const uint32_t BOOT_LOGO_HOLD_MS = 3900;
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.5f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
@@ -2864,7 +2862,7 @@ sensor:
       - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
     unit_of_measurement: "%"
     entity_category: "diagnostic"
-    device_class: ""
+    device_class: "" # ToDo check
 
   # --- Environmental Sensors ---
 
@@ -2895,7 +2893,7 @@ sensor:
   - platform: ens160_spi
     cs_pin: GPIO2
     data_rate: 200kHz
-    update_interval: 11s
+    update_interval: 10s
     eco2:
       name: "eCO2"
       id: sensor_eco2
@@ -3312,12 +3310,12 @@ binary_sensor:
               {
                 if (id(update_available_page_selected_button) == 0)
                 {
-                  // Install update
+                  // Install update now
                   id(update_firmware_component_http).perform(true);
                 }
                 else
                 {
-                  // Later button pressed - return to current dashboard
+                  // Later button pressed - return to current dashboard, don't install update
                   id(is_menu_detail_visible) = false;
                   id(is_menu_visible) = false;
                   id(return_to_current_dashboard).execute();
@@ -3403,15 +3401,11 @@ button:
 
             // Force save preferences to flash immediately
             global_preferences->sync();
-        - delay: 2s
-        - lambda: |-
+            delay(2000);
+
             id(main_display).clear();
             id(main_display).update();
             App.safe_reboot();
-
-  # Shutdown
-  #- platform: shutdown
-  #  name: "Shutdown ObsidianHub"
 
   # Factory Reset
   - platform: template
@@ -3431,8 +3425,8 @@ button:
             id(wake_display_and_reset_timer).execute();
 
             global_preferences->reset();
-        - delay: 2s
-        - lambda: |-
+            delay(2000);
+
             id(main_display).clear();
             id(main_display).update();
             App.safe_reboot();
