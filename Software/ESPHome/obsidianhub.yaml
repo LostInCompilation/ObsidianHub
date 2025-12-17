@@ -166,6 +166,13 @@ ota:
         - lambda: |-
             id(ota_progress) = 100.0f;
             id(main_display).update();
+
+            delay(1000);
+            id(main_display).show_page(page_is_restarting);
+            id(main_display).update();
+            delay(2000);
+            id(main_display).clear();
+            id(main_display).update();
     on_error:
       then:
         - lambda: |-
@@ -195,6 +202,13 @@ ota:
       then:
         - lambda: |-
             id(ota_progress) = 100.0f;
+            id(main_display).update();
+
+            delay(1000);
+            id(main_display).show_page(page_is_restarting);
+            id(main_display).update();
+            delay(2000);
+            id(main_display).clear();
             id(main_display).update();
     on_error:
       then:
