@@ -10,19 +10,25 @@
 ###############################################################
 
 # ToDo:
-# - Red pulse timing
 # - Weather station dashboard
 # - Brightness sync on boot fix
 # - Graph range and grid
 # - Graph show min max values
-# - Use new wifi ap enabled check for determinig if in ap mode: https://github.com/esphome/esphome/pull/11852
+# - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
 
 ###############################################################
 # Substitutions
 ###############################################################
 substitutions:
+  # Firmware Version
   version: "1.0.4"
-  num_dashboard_pages: 4
+
+  # Update URL
+  # Main
+  url_update_manifest: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/main/manifest.json"
+
+  # Client 00pg
+  #url_update_manifest: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/client_00pg/manifest.json"
 
   # Fallback location if it cant be automatically determined by IP
   fallback_latitude: "52.5174"  # Defaults to Berlin/Germany
@@ -30,6 +36,9 @@ substitutions:
 
   # API Key for OpenWeatherMap
   openweathermap_api_key: !secret openweathermap_api_key
+
+  # Number of dashboard pages
+  num_dashboard_pages: 4
 
 ###############################################################
 # Dashboard Import for easy ESPHome Device Builder usage
@@ -57,8 +66,6 @@ esphome:
     then:
       - script.execute: restore_led_states
       - script.execute: update_graph_durations
-      - lambda: |- # Debug
-          id(mqtt_component).set_broker_address("192.168.0.103");
 
 esp32:
   variant: ESP32C3
@@ -199,30 +206,32 @@ update:
   - platform: http_request
     name: "Firmware Update"
     id: update_firmware_component_http
-    update_interval: 120min
+    update_interval: 10min
     device_class: "firmware"
     entity_category: "config"
     internal: true
-    #source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest.json"
-    source: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/manifest_test.json"
+    source: "${url_update_manifest}"
     on_update_available:
       then:
         - lambda: |-
-            id(return_to_last_saved_page_with_delay).stop();
+            if (id(main_display).get_active_page() != id(page_update_available))
+            {
+              id(return_to_last_saved_page_with_delay).stop();
 
-            // Show update available page
-            id(is_menu_detail_visible) = false;
-            id(is_menu_visible) = false;
+              // Show update available page
+              id(is_menu_detail_visible) = false;
+              id(is_menu_visible) = false;
 
-            id(main_display).show_page(id(page_update_available));
-            id(wake_display_and_reset_timer).execute();
+              id(main_display).show_page(id(page_update_available));
+              id(wake_display_and_reset_timer).execute();
 
-            // Status LEDs
-            auto call = id(led_status).turn_on();
-            call.set_rgb(0.0f, 1.0f, 0.85f);
-            call.set_brightness(0.8f);
-            call.set_effect("Turquoise Pulse");
-            call.perform();
+              // Status LEDs
+              auto call = id(led_status).turn_on();
+              call.set_effect("Turquoise Pulse");
+              call.set_rgb(0.0f, 1.0f, 0.85f);
+              call.set_brightness(0.8f);
+              call.perform();
+            }
 
 ###############################################################
 # WiFi Configuration
@@ -248,9 +257,9 @@ wifi:
           id(wake_display_and_reset_timer).execute();
 
           auto call = id(led_status).turn_on();
-          call.set_rgb(0.0f, 1.0f, 0.0f);
-          call.set_brightness(0.7f);
           call.set_effect("None");
+          call.set_rgb(0.0f, 1.0f, 0.0f);
+          call.set_brightness(0.8f);
           call.perform();
         }
 
@@ -274,7 +283,7 @@ improv_serial:
 # MQTT Configuration
 ###############################################################
 mqtt:
-  broker: 192.168.0.250 #!secret mqtt_broker
+  broker: !secret mqtt_broker
   port: !secret mqtt_port
   username: !secret mqtt_user
   password: !secret mqtt_password
@@ -1098,7 +1107,7 @@ interval:
           {
             ap_mode_timer++;
 
-            // Trigger after 60s of no wifi connection
+            // Trigger after 60s of no WiFi connection
             if (ap_mode_timer > 6)
             {
               id(wake_display_and_reset_timer).execute();
@@ -1113,9 +1122,9 @@ interval:
               if (!leds_have_been_set)
               {
                 auto call = id(led_status).turn_on();
+                call.set_effect("Red Pulse");
                 call.set_rgb(1.0f, 0.0f, 0.0f);
                 call.set_brightness(0.9f);
-                call.set_effect("Red Pulse");
                 call.perform();
 
                 leds_have_been_set = true;
@@ -1189,19 +1198,19 @@ interval:
 
                       // Init LEDs for WiFi setup mode
                       auto call = id(led_status).turn_on();
+                      call.set_effect("Blue Pulse");
                       call.set_rgb(0.0f, 0.0f, 1.0f);
                       call.set_brightness(0.8f);
-                      call.set_effect("Blue Pulse");
                       call.perform();
 
                       // Key LEDs
                       call = id(led_key1).turn_on();
-                      call.set_rgb(1.0f, 1.0f, 0.9f);
+                      call.set_rgb(1.0f, 1.0f, 1.0f);
                       call.set_brightness(0.7f);
                       call.perform();
 
                       call = id(led_key2).turn_on();
-                      call.set_rgb(1.0f, 1.0f, 0.9f);
+                      call.set_rgb(1.0f, 1.0f, 1.0f);
                       call.set_brightness(0.7f);
                       call.perform();
                   }
@@ -1841,7 +1850,6 @@ display:
       - id: page_brightness_control
         lambda: |-
           // Header
-          //it.printf(64, 1, id(font_ui_15_bold), TextAlign::TOP_CENTER, "BRIGHTNESS");
           it.printf(64, 1, id(font7x13B), TextAlign::TOP_CENTER, "BRIGHTNESS");
 
           // Large percentage value
@@ -2680,14 +2688,19 @@ light:
             - state: false
               duration: 550ms
               transition_length: 550ms
-      - pulse:
+      - strobe:
           name: "Red Pulse"
-          transition_length:
-            on_length: 600ms
-            off_length: 400ms
-          update_interval: 800ms
-          min_brightness: 0%
-          max_brightness: 100%
+          colors:
+            - state: true
+              brightness: 100%
+              red: 100%
+              green: 0%
+              blue: 0%
+              duration: 2000ms
+              transition_length: 1300ms
+            - state: false
+              duration: 550ms
+              transition_length: 550ms
 
   - platform: partition
     name: "Left Key LED"
@@ -3328,7 +3341,7 @@ switch:
 select:
   # Sleep Components
   - platform: template
-    name: "Sleep Components"
+    name: "Components To Sleep"
     id: select_sleep_components
     entity_category: "config"
     icon: mdi:sleep
@@ -3360,7 +3373,7 @@ number:
     optimistic: true
     set_action:
       - lambda: |-
-          // This runs whenever the value changes (from encoder or from Home Assistant)
+          // set_action runs whenever the value changes (from encoder or Home Assistant)
           id(brightness_control).publish_state(x);
 
           // Do nothing if still booting or on certain pages
@@ -3369,7 +3382,8 @@ number:
               || id(main_display).get_active_page() == id(page_is_restarting)
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
               || id(main_display).get_active_page() == id(page_is_updating)
-              || id(main_display).get_active_page() == id(page_update_available))
+              || id(main_display).get_active_page() == id(page_update_available)
+              || id(is_menu_visible))
             return;
 
           // Save current page and switch to brightness page
