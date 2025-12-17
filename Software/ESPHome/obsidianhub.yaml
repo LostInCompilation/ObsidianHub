@@ -208,7 +208,7 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 10min
+    update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
     internal: true
@@ -810,8 +810,6 @@ script:
   - id: show_update_available
     then:
       - lambda: |-
-          ESP_LOGI("show_update_available", "show_update_available CALLED");
-
           if (id(main_display).get_active_page() != id(page_update_available))
           {
             id(return_to_last_saved_page_with_delay).stop();
@@ -1000,16 +998,6 @@ script:
 # Intervals (Periodic Tasks)
 ###############################################################
 interval:
-  # Reshow update available page if user pressed "Later"
-  - interval: 30s
-    startup_delay: 10s
-    then:
-      - if:
-          condition:
-            - update.is_available: update_firmware_component_http
-          then:
-            - script.execute: show_update_available
-
   # Update boot animation frames
   - interval: 12ms
     then:
@@ -1038,6 +1026,16 @@ interval:
             lambda: "return id(is_boot_complete) && !id(ens160_sensor_ready);"
           then:
             - animation.next_frame: animation_spinner2
+
+  # Reshow update available page if user pressed "Later"
+  - interval: 120min
+    startup_delay: 60s
+    then:
+      - if:
+          condition:
+            update.is_available: update_firmware_component_http
+          then:
+            - script.execute: show_update_available
 
   # Fetch location
   - interval: 10s
