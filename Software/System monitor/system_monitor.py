@@ -2,7 +2,7 @@
 
 """
 System Monitor for ObsidianHub
-Sends CPU, RAM, Disk, and Network metrics to individual MQTT topics for ObsidianHub device.
+Sends CPU, RAM, Disk, and Network metrics over MQTT to your ObsidianHub.
 """
 
 import psutil

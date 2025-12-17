@@ -520,11 +520,10 @@ font:
   # --- Weather Dashboard ---
   - file:
       type: gfonts
-      #family: Google Sans
-      family: Chiron GoRound TC
-      weight: 600
+      family: Noto Sans
+      weight: 700
     id: font_weather_temp
-    size: 27
+    size: 25
     glyphs: ".-°C0123456789"
 
   # --- Diverse Elements ---
@@ -1593,8 +1592,8 @@ display:
 
           if (!id(mqtt_cpu_percent).has_state() || !is_connected)
           {
-            it.printf(64, 4, id(font_ui_18_bold), TextAlign::TOP_CENTER, "SYSTEM STATS");
-            it.printf(64, 32, id(font_ui_15_bold), TextAlign::TOP_CENTER, "No Data");
+            it.printf(64, 2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "SYSTEM STATS");
+            it.printf(64, 30, id(font_ui_15_bold), TextAlign::TOP_CENTER, "No Data");
             return;
           }
 
@@ -1699,7 +1698,7 @@ display:
           // =============================================
           // Temperature
           if (root["main"]["temp"].is<float>())
-            it.printf(95, 10, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
+            it.printf(95, 9, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
 
           // =============================================
           // TICKER
@@ -1727,6 +1726,22 @@ display:
                             root["weather"][0]["main"].as<const char*>());
           }
 
+          // Min Temperature
+          if (root["main"]["temp_min"].is<float>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sLow: %d°C", (pos > 0 ? SEPARATOR : ""),
+                            lround(root["main"]["temp_min"].as<float>()));
+          }
+
+          // Max Temperature
+          if (root["main"]["temp_max"].is<float>())
+          {
+            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
+                            "%sHigh: %d°C", (pos > 0 ? SEPARATOR : ""),
+                            lround(root["main"]["temp_max"].as<float>()));
+          }
+
           // Humidity
           if (root["main"]["humidity"].is<int>())
           {
@@ -1744,24 +1759,8 @@ display:
                             lround(wind_kmh));
           }
 
-          // Min Temperature
-          if (root["main"]["temp_min"].is<float>())
-          {
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sLow: %d°C", (pos > 0 ? SEPARATOR : ""),
-                            lround(root["main"]["temp_min"].as<float>()));
-          }
-
-          // Max Temperature
-          if (root["main"]["temp_max"].is<float>())
-          {
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%sHigh: %d°C", (pos > 0 ? SEPARATOR : ""),
-                            lround(root["main"]["temp_max"].as<float>()));
-          }
-
           // Add padding at the end
-          snprintf(new_ticker + pos, sizeof(new_ticker) - pos, "        ");
+          snprintf(new_ticker + pos, sizeof(new_ticker) - pos, "         ");
 
           // Update ticker if text changed
           if (strcmp(new_ticker, ticker_text) != 0)
@@ -3020,7 +3019,7 @@ text_sensor:
   - platform: uptime
     name: "Uptime"
     id: text_sensor_uptime
-    update_interval: 10s
+    update_interval: 30s
     format:
       separator: " "
       days: "D"
