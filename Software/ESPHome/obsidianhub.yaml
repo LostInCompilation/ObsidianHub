@@ -15,6 +15,7 @@
 # - Graph range and grid
 # - Graph show min max values
 # - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
+# - subst. (compile switch) for disable system monitor page
 
 ###############################################################
 # Substitutions
@@ -528,11 +529,11 @@ font:
   # --- Weather Dashboard ---
   - file:
       type: gfonts
-      family: Noto Sans
+      family: IBM Plex Sans
       weight: 700
     id: font_weather_temp
-    size: 25
-    glyphs: ".-°C0123456789"
+    size: 28
+    glyphs: "-°C0123456789"
 
   # --- Diverse Elements ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13.bdf"
@@ -671,62 +672,62 @@ image:
     id: icon_weather_01d
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 46x46
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/01n.png"
     id: icon_weather_01n
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 42x46
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/02d.png"
     id: icon_weather_02d
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/02n.png"
     id: icon_weather_02n
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/03.png"
     id: icon_weather_03
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/09.png"
     id: icon_weather_09
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/10d.png"
     id: icon_weather_10d
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/10n.png"
     id: icon_weather_10n
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/11.png"
     id: icon_weather_11
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/13.png"
     id: icon_weather_13
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/50.png"
     id: icon_weather_50
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/img/weather/1232n.png"
     id: icon_weather_1232n
     type: binary
     invert_alpha: false
-    resize: 42x42
+    resize: 52x52
 
 ###############################################################
 # Animations
@@ -824,7 +825,7 @@ script:
   - id: show_update_available
     then:
       - lambda: |-
-          if (id(main_display).get_active_page() != id(page_update_available))
+          if (id(is_boot_complete) && id(main_display).get_active_page() != id(page_update_available))
           {
             id(return_to_last_saved_page_with_delay).stop();
 
@@ -1089,7 +1090,7 @@ interval:
 
   # Save current LED states to global which will be written to flash automatically
   - interval: 500ms
-    startup_delay: 5s
+    startup_delay: 2s
     then:
       - lambda: |-
           // Don't save while on certain pages
@@ -1708,9 +1709,11 @@ display:
 
           // =============================================
           // Icon
-          const uint8_t icon_x = 9;
-          const uint8_t icon_y = 8;
           static std::string icon = "";
+
+          uint8_t icon_x = 0;
+          uint8_t icon_y = 0;
+          int8_t temp_desc_offset = 0;
 
           if (root["weather"][0]["icon"].is<const char*>())
             icon = root["weather"][0]["icon"].as<const char*>();
@@ -1734,9 +1737,15 @@ display:
           switch ((uint32_t)id(brightness_control).state)
           {
             case 0:
+              icon_x = 10;
+              icon_y = 1;
+              temp_desc_offset = -1;
               it.image(icon_x, icon_y, id(icon_weather_01d));
             break;
             case 2:
+              icon_x = 10;
+              icon_y = 1;
+              temp_desc_offset = -1;
               it.image(icon_x, icon_y, id(icon_weather_01n));
             break;
             case 4:
@@ -1776,16 +1785,15 @@ display:
 
 
 
-
           // =============================================
-          // City
-          //if (root["name"].is<const char*>())
-          //  it.printf(64, -2, id(font6x12), TextAlign::TOP_CENTER, "%s", root["name"].as<const char*>());
+          // Description
+          if (root["weather"][0]["main"].is<const char*>())
+            it.printf(94, 3 + temp_desc_offset, id(font6x12), TextAlign::TOP_CENTER, "%s", root["weather"][0]["main"].as<const char*>());
 
           // =============================================
           // Temperature
           if (root["main"]["temp"].is<float>())
-            it.printf(95, 9, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
+            it.printf(94, 11 + temp_desc_offset, id(font_weather_temp), TextAlign::TOP_CENTER, "%d°C", lround(root["main"]["temp"].as<float>()));
 
           // =============================================
           // TICKER
@@ -1811,14 +1819,6 @@ display:
             pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
                             "%s%s", (pos > 0 ? SEPARATOR : ""),
                             root["name"].as<const char*>());
-          }
-
-          // Weather Description
-          if (root["weather"][0]["main"].is<const char*>())
-          {
-            pos += snprintf(new_ticker + pos, sizeof(new_ticker) - pos,
-                            "%s%s", (pos > 0 ? SEPARATOR : ""),
-                            root["weather"][0]["main"].as<const char*>());
           }
 
           // Min Temperature
@@ -3179,6 +3179,7 @@ binary_sensor:
     on_press:
       then:
         - script.execute: wake_display_and_reset_timer
+        - script.execute: fetch_weather
 
   # Rotary encoder push button
   - platform: gpio
