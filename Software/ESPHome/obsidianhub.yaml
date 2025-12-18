@@ -138,8 +138,8 @@ http_request:
   redirect_limit: 3
   buffer_size_rx: 2048
   buffer_size_tx: 512
-  timeout: 5s
-  watchdog_timeout: 6s
+  timeout: 4s
+  watchdog_timeout: 5s
   useragent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 ###############################################################
@@ -1054,8 +1054,8 @@ interval:
           then:
             - script.execute: show_update_available
 
-  # Fetch location
-  - interval: 10s
+  # Fetch location quickly at the beginning
+  - interval: 12s
     startup_delay: 15s
     then:
       - if:
@@ -1063,7 +1063,7 @@ interval:
             lambda: "return !id(location_fetched) && id(wifi_component).is_connected() && id(wifi_has_been_setup_by_user);"
           then:
             - lambda: |-
-                const uint8_t MAX_RETRIES = 20;
+                const uint8_t MAX_RETRIES = 4;
                 static uint8_t attempt = 0;
 
                 if (attempt < MAX_RETRIES && !id(location_fetched))
@@ -1081,8 +1081,8 @@ interval:
                 }
 
   # Update Weather Data
-  - interval: 10min
-    startup_delay: 60s
+  - interval: 15min
+    startup_delay: 75s
     then:
       - if:
           condition:
