@@ -5,7 +5,7 @@
     {
       "chipFamily": "ESP32-C3",
       "ota": {
-        "md5": "6fddb8a07a74cc3969197499f6926c20",
+        "md5": "240b5c793a51ccd71f4c1c3589ef71c9",
         "path": "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/client_00pg/obsidianhub.ota.bin"
       }
     }
