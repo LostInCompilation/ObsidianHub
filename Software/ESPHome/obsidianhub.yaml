@@ -225,7 +225,7 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 120min
+    update_interval: 1min
     device_class: "firmware"
     entity_category: "config"
     internal: true
@@ -1275,8 +1275,7 @@ interval:
               if (page == id(page_graph_duration_restart_confirm) ||
                   page == id(page_is_restarting) ||
                   page == id(page_wifi_ap_mode) ||
-                  page == id(page_is_updating) ||
-                  page == id(page_update_available))
+                  page == id(page_is_updating))
                   return;
 
               const bool any_button_held = id(button_encoder).state ||
@@ -1367,8 +1366,7 @@ interval:
               && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
               && id(main_display).get_active_page() != id(page_wifi_ap_mode)
               && id(main_display).get_active_page() != id(page_is_restarting)
-              && id(main_display).get_active_page() != id(page_is_updating)
-              && id(main_display).get_active_page() != id(page_update_available))
+              && id(main_display).get_active_page() != id(page_is_updating))
           {
               const uint32_t idle_time = now - id(last_interaction_time_ms);
 
@@ -3385,8 +3383,7 @@ binary_sensor:
                 || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
                 || id(main_display).get_active_page() == id(page_wifi_ap_mode)
                 || id(main_display).get_active_page() == id(page_is_restarting)
-                || id(main_display).get_active_page() == id(page_is_updating)
-                || id(main_display).get_active_page() == id(page_update_available))
+                || id(main_display).get_active_page() == id(page_is_updating))
               return;
 
             // Only ignore next short press if display is asleep
