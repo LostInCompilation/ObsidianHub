@@ -57,7 +57,7 @@ esphome:
   name: obsidianhub
   friendly_name: ObsidianHub
   comment: "SmartHome Dashboard with multiple environmental sensors"
-  min_version: 2025.11.1
+  min_version: 2025.12.0
   project:
     name: "Marc.ObsidianHub"
     version: "${version}"
@@ -770,6 +770,9 @@ script:
       - lambda: |-
           id(last_interaction_time_ms) = millis();
 
+          // Always set current brightness (needed for auto dim)
+          id(main_display).set_contrast(id(display_brightness));
+
           // Only wake if currently sleeping or fading out
           if (!id(is_display_sleeping) && !id(is_led_sleeping) && !id(is_fade_out_in_progress))
             return;
@@ -1172,7 +1175,40 @@ interval:
             leds_have_been_set = false;
           }
 
-  # Handle boot animation and auto-sleep
+  # Auto dimming the display based on brightness sensor
+  # - interval: 5s
+  #   startup_delay: 5s
+  #   then:
+  #     - if:
+  #         condition:
+  #           lambda: "return id(is_boot_complete)
+  #                       && id(switch_auto_dim_display).state
+  #                       && !id(is_display_sleeping)
+  #                       && !id(is_fade_out_in_progress)
+  #                       && id(sensor_brightness).has_state()
+  #                       && (millis() - id(last_interaction_time_ms) > 6000);"
+  #         then:
+  #           - lambda: |-
+  #               const float env_brightness = id(sensor_brightness).state;
+
+  #               if (env_brightness <= 0.2f)
+  #               {
+  #                 // Darkness, dim to low brightness
+  #                 id(main_display).set_contrast(0.1f);
+  #               }
+  #               else if (env_brightness <= 1.0f)
+  #               {
+  #                 // Dim a little (half the set brightness)
+  #                 const float half = max(id(display_brightness) / 2.0f, 0.1f);
+  #                 id(main_display).set_contrast(half);
+  #               }
+  #               else
+  #               {
+  #                 // No dim
+  #                 id(main_display).set_contrast(id(display_brightness));
+  #               }
+
+  # Handle boot animation, auto-sleep and auto dimming of the display
   - interval: 75ms
     then:
       - lambda: |-
@@ -1180,10 +1216,17 @@ interval:
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.5f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
+          static const uint32_t AUTO_DIM_CHECK_INTERVAL_MS = 5000;
+          static const uint32_t AUTO_DIM_DELAY_MS = 5000;
 
           static uint32_t fade_start = 0;
           static uint32_t hold_start = 0;
           static bool fade_done = false;
+          static uint32_t last_auto_dim_check = 0;
+          static float auto_dim_target_brightness = -1.0f;
+          static float auto_dim_start_brightness = -1.0f;
+          static uint32_t auto_dim_fade_start = 0;
+          static bool auto_dim_fade_in_progress = false;
 
           const uint32_t now = millis();
 
@@ -1314,7 +1357,7 @@ interval:
                       {
                           // Fading
                           const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
-                          const float gamma_corrected = pow(progress, GAMMA) * id(display_brightness);
+                          const float gamma_corrected = pow(progress, GAMMA) * id(main_display).get_contrast();
                           id(main_display).set_contrast(gamma_corrected);
                       }
                       else
@@ -1335,6 +1378,98 @@ interval:
                   id(led_key1).turn_off().perform();
                   id(led_key2).turn_off().perform();
                   id(is_led_sleeping) = true;
+              }
+          }
+
+          // ============================================
+          // AUTO-DIM: Smooth fade to ambient brightness
+          // ============================================
+          // Reset to default brightness if sensor loses state during fade
+          if (auto_dim_fade_in_progress && !id(sensor_brightness).has_state())
+          {
+              auto_dim_fade_in_progress = false;
+              auto_dim_target_brightness = -1.0f;
+              id(main_display).set_contrast(id(display_brightness));
+          }
+
+          if (id(is_boot_complete) &&
+              id(switch_auto_dim_display).state &&
+              !id(is_display_sleeping) &&
+              !id(is_fade_out_in_progress) &&
+              id(sensor_brightness).has_state())
+          {
+              const uint32_t idle_time = now - id(last_interaction_time_ms);
+
+              // Check if user just interacted - cancel auto-dim and reset state
+              if (idle_time < AUTO_DIM_DELAY_MS)
+              {
+                  if (auto_dim_fade_in_progress || auto_dim_target_brightness >= 0.0f)
+                  {
+                      auto_dim_fade_in_progress = false;
+                      auto_dim_target_brightness = -1.0f;
+                      auto_dim_start_brightness = -1.0f;
+                      id(main_display).set_contrast(id(display_brightness));
+                  }
+              }
+
+              // Check brightness sensor every AUTO_DIM_CHECK_INTERVAL_MS
+              if (now - last_auto_dim_check >= AUTO_DIM_CHECK_INTERVAL_MS)
+              {
+                  last_auto_dim_check = now;
+
+                  // Start auto-dim after AUTO_DIM_DELAY_MS of inactivity
+                  if (idle_time >= AUTO_DIM_DELAY_MS)
+                  {
+                      const float env_brightness = id(sensor_brightness).state;
+                      float new_target = -1.0f;
+
+                      if (env_brightness <= 0.5f)
+                      {
+                          // Darkness, dim to low brightness
+                          new_target = 0.1f;
+                      }
+                      else if (env_brightness <= 2.0f)
+                      {
+                          // Dim a little (half the set brightness)
+                          new_target = max(id(display_brightness) / 2.0f, 0.1f);
+                      }
+                      else
+                      {
+                          // No dim
+                          new_target = id(display_brightness);
+                      }
+
+                      // Only start new fade if target changed
+                      if (new_target != auto_dim_target_brightness)
+                      {
+                          auto_dim_target_brightness = new_target;
+                          auto_dim_start_brightness = id(main_display).get_contrast();
+                          auto_dim_fade_start = now;
+                          auto_dim_fade_in_progress = true;
+                      }
+                  }
+              }
+
+              // Perform auto-dim fade
+              if (auto_dim_fade_in_progress && auto_dim_target_brightness >= 0.0f)
+              {
+                  const uint32_t elapsed = now - auto_dim_fade_start;
+
+                  if (elapsed < FADE_DURATION_MS)
+                  {
+                      // Fading
+                      const float progress = elapsed * INV_FADE_DURATION;
+                      const float gamma_corrected = pow(progress, GAMMA);
+                      const float current_brightness = auto_dim_start_brightness +
+                                                       (auto_dim_target_brightness - auto_dim_start_brightness) * gamma_corrected;
+                      id(main_display).set_contrast(current_brightness);
+                  }
+                  else
+                  {
+                      // Fade complete
+                      id(main_display).set_contrast(auto_dim_target_brightness);
+                      auto_dim_fade_in_progress = false;
+                  }
               }
           }
 
@@ -2525,6 +2660,14 @@ graphical_display_menu:
                   id(main_display).set_contrast(id(display_brightness));
                   id(config_display_brightness).publish_state(val);
 
+        # Auto Dim Display
+        - type: switch
+          immediate_edit: false
+          text: "Auto Dim"
+          on_text: "ON"
+          off_text: "OFF"
+          switch: switch_auto_dim_display
+
         # Invert Display
         - type: switch
           immediate_edit: false
@@ -2887,6 +3030,7 @@ sensor:
     iir_filter: 4x
     pressure:
       name: "Atmospheric Pressure"
+      id: sensor_pressure
       oversampling: 16x
 
   # ENS160: Air quality sensor (CO2, TVOC, AQI)
@@ -2911,6 +3055,7 @@ sensor:
   # BH1750: Ambient light sensor
   - platform: bh1750
     name: "Illuminance"
+    id: sensor_brightness
     address: 0x23
     update_interval: 1500ms
 
@@ -3203,6 +3348,7 @@ text_sensor:
   # Convert numeric AQI to descriptive text
   - platform: template
     name: "Air Quality"
+    id: text_sensor_air_quality
     icon: mdi:chemical-weapon
     update_interval: 2s
     lambda: |-
@@ -3410,6 +3556,7 @@ button:
   # Factory Reset
   - platform: template
     name: "Reset To Factory Defaults"
+    id: button_reset_to_factory_defaults
     icon: mdi:cog
     entity_category: "config"
     on_press:
@@ -3453,6 +3600,18 @@ switch:
         - script.execute: wake_display_and_reset_timer
         - lambda: |-
             id(main_display).set_invert(false);
+
+  # Auto Dim Display
+  - platform: template
+    name: "Auto Dim"
+    id: switch_auto_dim_display
+    entity_category: "config"
+    icon: mdi:theme-light-dark # ToDo
+    restore_mode: RESTORE_DEFAULT_ON
+    optimistic: true
+    on_state:
+      then:
+        - script.execute: wake_display_and_reset_timer
 
 ###############################################################
 # Dropdown Select
