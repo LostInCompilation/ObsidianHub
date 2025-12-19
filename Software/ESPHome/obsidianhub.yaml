@@ -21,7 +21,7 @@
 substitutions:
   # ----------------------------------
   # Firmware Version
-  version: "1.1.0"
+  version: "1.1.1"
 
   # ----------------------------------
   # Firmware Update URL
@@ -1175,39 +1175,6 @@ interval:
             leds_have_been_set = false;
           }
 
-  # Auto dimming the display based on brightness sensor
-  # - interval: 5s
-  #   startup_delay: 5s
-  #   then:
-  #     - if:
-  #         condition:
-  #           lambda: "return id(is_boot_complete)
-  #                       && id(switch_auto_dim_display).state
-  #                       && !id(is_display_sleeping)
-  #                       && !id(is_fade_out_in_progress)
-  #                       && id(sensor_brightness).has_state()
-  #                       && (millis() - id(last_interaction_time_ms) > 6000);"
-  #         then:
-  #           - lambda: |-
-  #               const float env_brightness = id(sensor_brightness).state;
-
-  #               if (env_brightness <= 0.2f)
-  #               {
-  #                 // Darkness, dim to low brightness
-  #                 id(main_display).set_contrast(0.1f);
-  #               }
-  #               else if (env_brightness <= 1.0f)
-  #               {
-  #                 // Dim a little (half the set brightness)
-  #                 const float half = max(id(display_brightness) / 2.0f, 0.1f);
-  #                 id(main_display).set_contrast(half);
-  #               }
-  #               else
-  #               {
-  #                 // No dim
-  #                 id(main_display).set_contrast(id(display_brightness));
-  #               }
-
   # Handle boot animation, auto-sleep and auto dimming of the display
   - interval: 75ms
     then:
@@ -1392,11 +1359,16 @@ interval:
               id(main_display).set_contrast(id(display_brightness));
           }
 
-          if (id(is_boot_complete) &&
-              id(switch_auto_dim_display).state &&
-              !id(is_display_sleeping) &&
-              !id(is_fade_out_in_progress) &&
-              id(sensor_brightness).has_state())
+          if (id(is_boot_complete)
+              && id(switch_auto_dim_display).state
+              && !id(is_display_sleeping)
+              && !id(is_fade_out_in_progress)
+              && id(sensor_brightness).has_state()
+              && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
+              && id(main_display).get_active_page() != id(page_wifi_ap_mode)
+              && id(main_display).get_active_page() != id(page_is_restarting)
+              && id(main_display).get_active_page() != id(page_is_updating)
+              && id(main_display).get_active_page() != id(page_update_available))
           {
               const uint32_t idle_time = now - id(last_interaction_time_ms);
 

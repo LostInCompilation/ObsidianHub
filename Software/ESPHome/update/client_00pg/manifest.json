@@ -1,11 +1,11 @@
 {
   "name": "ObsidianHub",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "builds": [
     {
       "chipFamily": "ESP32-C3",
       "ota": {
-        "md5": "240b5c793a51ccd71f4c1c3589ef71c9",
+        "md5": "a0f2b31d9e16dfd1c950e47ed24c18f2",
         "path": "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/client_00pg/obsidianhub.ota.bin"
       }
     }
