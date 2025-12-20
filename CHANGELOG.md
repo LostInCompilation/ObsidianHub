@@ -1,5 +1,30 @@
 # ObsidianHub Changelog
 
+## v1.1.2
+
+### New
+
+- Update available notifications in HomeAssistant and MQTT with the ability to install firmware updates remotely from inside HomeAssistant
+- Display a custom notification on your ObsidianHub: Send the notification over MQTT to show it on the display. You can sepcifiy the title, message and a timeout for how long the notification should be displayed (0 = show until rotary encoder pressed, or show for n seconds)
+
+**MQTT topic:**
+
+```
+topic
+```
+
+**Payload:**
+
+```
+test
+```
+
+### Fixes & Improvements
+
+- Enable auto sleep on firmware update available notification
+- Renamed entities
+- Changed entity icons
+
 ## v1.1.1
 
 ### New

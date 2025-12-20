@@ -10,6 +10,9 @@
 ###############################################################
 
 # ToDo:
+# - Rising falling trends
+# - Notification over mqtt (custom)
+# - Timer
 # - Brightness sync on boot fix
 # - Graph range and grid
 # - Graph show min max values
@@ -35,6 +38,10 @@ substitutions:
   # Dashboards
   num_dashboard_pages: 4
   enable_system_monitor_dashboard: false
+
+  # ----------------------------------
+  # Timezone
+  timezone: "Europe/Berlin"
 
   # ----------------------------------
   # Weather
@@ -225,10 +232,9 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 1min
+    update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
-    internal: true
     on_update_available:
       then:
         - script.execute: show_update_available
@@ -279,7 +285,7 @@ wifi:
 captive_portal:
 
 # Improv over serial as backup WiFi setup method
-improv_serial:
+#improv_serial:
 
 ###############################################################
 # MQTT Configuration
@@ -307,7 +313,7 @@ time:
   - platform: sntp
     id: sntp_time
     update_interval: 6h
-    timezone: Europe/Berlin
+    timezone: ${timezone}
     servers:
      - 0.pool.ntp.org
      - 1.pool.ntp.org
@@ -900,15 +906,27 @@ script:
     then:
       - lambda: |-
           // Restore Status LED
-          if (id(saved_status_led_state)[4] > 0.0f)
+          if (id(main_display).get_active_page() != id(page_update_available))
           {
+            if (id(saved_status_led_state)[4] > 0.0f)
+            {
+              auto call = id(led_status).turn_on();
+              call.set_rgb(
+                  id(saved_status_led_state)[1],
+                  id(saved_status_led_state)[2],
+                  id(saved_status_led_state)[3]
+              );
+              call.set_brightness(id(saved_status_led_state)[0]);
+              call.perform();
+            }
+          }
+          else
+          {
+            // On update available page, restore turquoise blinking
             auto call = id(led_status).turn_on();
-            call.set_rgb(
-                id(saved_status_led_state)[1],
-                id(saved_status_led_state)[2],
-                id(saved_status_led_state)[3]
-            );
-            call.set_brightness(id(saved_status_led_state)[0]);
+            call.set_effect("Turquoise Pulse");
+            call.set_rgb(0.0f, 1.0f, 0.85f);
+            call.set_brightness(0.8f);
             call.perform();
           }
 
@@ -1548,8 +1566,8 @@ display:
       # ============================================
       - id: page_wifi_ap_mode
         lambda: |-
-          it.printf(28, 25, id(font_ui_15_bold), TextAlign::CENTER, "Setup");
-          it.printf(28, 39, id(font_ui_15_bold), TextAlign::CENTER, "WiFi");
+          it.printf(28, 24, id(font_ui_15_bold), TextAlign::CENTER, "Setup");
+          it.printf(28, 41, id(font_ui_15_bold), TextAlign::CENTER, "WiFi");
 
           // Draw the QR-code
           it.qr_code(62, 0, id(wifi_ap_qr_code), COLOR_ON, 2);
@@ -1900,74 +1918,6 @@ display:
             icon_y = -1;
             it.image(icon_x, icon_y, id(icon_weather_1232n));
           }
-
-          // Debug
-          /*switch ((uint32_t)id(brightness_control).state)
-          {
-            case 0:
-              icon_x = 6;
-              icon_y = 1;
-              it.image(icon_x, icon_y, id(icon_weather_01d));
-            break;
-            case 2:
-              icon_x = 10;
-              icon_y = 1;
-              it.image(icon_x, icon_y, id(icon_weather_01n));
-            break;
-            case 4:
-              icon_x = 1;
-              icon_y = -4;
-              it.image(icon_x, icon_y, id(icon_weather_02d));
-            break;
-            case 6:
-              icon_x = 1;
-              icon_y = -5;
-              it.image(icon_x, icon_y, id(icon_weather_02n));
-            break;
-            case 8:
-              icon_x = 3;
-              icon_y = -4;
-              it.image(icon_x, icon_y, id(icon_weather_03));
-            break;
-            case 10:
-              icon_x = 3;
-              icon_y = 0;
-              it.image(icon_x, icon_y, id(icon_weather_09));
-            break;
-            case 12:
-              icon_x = 5;
-              icon_y = 0;
-              it.image(icon_x, icon_y, id(icon_weather_10d));
-            break;
-            case 14:
-              icon_x = 5;
-              icon_y = 0;
-              it.image(icon_x, icon_y, id(icon_weather_10n));
-            break;
-            case 16:
-              icon_x = 3;
-              icon_y = 0;
-              it.image(icon_x, icon_y, id(icon_weather_11));
-            break;
-            case 18:
-              icon_x = 2;
-              icon_y = -1;
-              it.image(icon_x, icon_y, id(icon_weather_13));
-            break;
-            case 20:
-              icon_x = 2;
-              icon_y = -3;
-              it.image(icon_x, icon_y, id(icon_weather_50));
-            break;
-            case 22:
-              icon_x = 4;
-              icon_y = -1;
-              it.image(icon_x, icon_y, id(icon_weather_1232n));
-            break;
-
-            default:
-            break;
-          }*/
 
           // =============================================
           // Description
@@ -2419,14 +2369,6 @@ display:
           // Free memory
           it.printf(1, 26, id(font7x13), TextAlign::TOP_LEFT, "Free RAM:");
           it.printf(127, 26, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
-
-          // Max heap block
-          //it.printf(1, 38, id(font7x13), TextAlign::TOP_LEFT, "Max Block:");
-          //it.printf(127, 38, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", (float)id(sensor_heap_max_block).state / 1024.0f);
-
-          // Loop time
-          //it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "Loop Time:");
-          //it.printf(127, 50, id(font7x13B), TextAlign::TOP_RIGHT, "%.0f ms", id(sensor_loop_time).state);
 
       # ============================================
       # MENU DETAIL: WiFi Status
@@ -2972,10 +2914,9 @@ sensor:
     id: sensor_wifi_signal_percentage
     icon: mdi:wifi
     filters:
-      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+      - lambda: return min(max(2.0f * (x + 100.0f), 0.0f), 100.0f);
     unit_of_measurement: "%"
     entity_category: "diagnostic"
-    device_class: "" # ToDo check
 
   # --- Environmental Sensors ---
 
@@ -3003,7 +2944,7 @@ sensor:
       id: sensor_pressure
       oversampling: 16x
 
-  # ENS160: Air quality sensor (CO2, TVOC, AQI)
+  # ENS160: Air quality sensor (eCO2, TVOC, AQI)
   - platform: ens160_spi
     cs_pin: GPIO2
     data_rate: 200kHz
@@ -3575,7 +3516,7 @@ switch:
     name: "Auto Dim"
     id: switch_auto_dim_display
     entity_category: "config"
-    icon: mdi:theme-light-dark # ToDo
+    icon: mdi:lightbulb-on-60
     restore_mode: RESTORE_DEFAULT_ON
     optimistic: true
     on_state:
@@ -3620,9 +3561,6 @@ number:
     optimistic: true
     set_action:
       - lambda: |-
-          // set_action runs whenever the value changes (from encoder or Home Assistant)
-          id(brightness_control).publish_state(x);
-
           // Do nothing if still booting or on certain pages
           if (!id(is_boot_complete)
               || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
@@ -3666,7 +3604,7 @@ number:
 
   # Auto sleep
   - platform: template
-    name: "Auto Sleep"
+    name: "Auto Sleep Time"
     id: config_auto_sleep
     entity_category: "config"
     icon: mdi:timer
