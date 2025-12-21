@@ -1,6 +1,6 @@
 # ObsidianHub Changelog
 
-## v1.1.2
+## v1.1.2 (WIP)
 
 ### New
 
@@ -10,7 +10,7 @@
 **MQTT topic:**
 
 ```
-topic
+obsidianhub/notification
 ```
 
 **Payload:**
@@ -24,6 +24,7 @@ test
 - Enable auto sleep on firmware update available notification
 - Renamed entities
 - Changed entity icons
+- Bug fixes
 
 ## v1.1.1
 

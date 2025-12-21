@@ -17,6 +17,14 @@
 # - Graph range and grid
 # - Graph show min max values
 # - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
+# - Reset menu after notification pop up (menu gets hidden but not reset to root item); same issue on other transitions that manually hide the menu
+
+# Notification:
+# Check ignore interactions on notification page!
+# Button show/hide
+# Auto font size (bigger font if short message)+
+# Scroll time based on num of lines
+# Cap off very long messages
 
 ###############################################################
 # Substitutions
@@ -232,7 +240,7 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 120min
+    update_interval: 2min
     device_class: "firmware"
     entity_category: "config"
     on_update_available:
@@ -483,17 +491,43 @@ globals:
   - id: saved_status_led_state
     type: float[5]
     restore_value: yes
-    initial_value: '{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}'
+    initial_value: "{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}"
 
   - id: saved_key1_led_state
     type: float[5]
     restore_value: yes
-    initial_value: '{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}'
+    initial_value: "{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}"
 
   - id: saved_key2_led_state
     type: float[5]
     restore_value: yes
-    initial_value: '{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}'
+    initial_value: "{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}"
+
+  # --- Custom Notification System ---
+  - id: notification_title
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: notification_message
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+  - id: notification_timeout
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: notification_start_time
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: notification_show_border
+    type: bool
+    restore_value: no
+    initial_value: "true"
 
 ###############################################################
 # Fonts
@@ -554,7 +588,8 @@ font:
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/|-0123456789\u0025"
+    # Use all glyphs since this font is used for custom notification text
+    #glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/|-0123456789\u0025"
 
   # --- Headers ---
   - file:
@@ -572,7 +607,7 @@ font:
       weight: 650
     id: font_ui_15_bold
     size: 15
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:!°<>()-0123456789\u0025"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .,:'´`!?°#+*=&$§\"<>()/|\\-_0123456789\u0025"
 
   # --- Large Numbers ---
   - file:
@@ -799,8 +834,19 @@ script:
     then:
       - delay: 600ms
       - lambda: |-
-          // Open menu if long pressed
-          if (id(button_encoder).state && !id(is_menu_visible) && !id(is_menu_detail_visible))
+          // Ignore long press on certain pages
+          if(id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
+              || id(main_display).get_active_page() == id(page_is_restarting)
+              || id(main_display).get_active_page() == id(page_wifi_ap_mode)
+              || id(main_display).get_active_page() == id(page_is_updating)
+              || id(main_display).get_active_page() == id(page_update_available)
+              || id(main_display).get_active_page() == id(page_notification)
+              || id(is_menu_visible)
+              || id(is_menu_detail_visible))
+            return;
+
+          // Open menu if still pressed
+          if (id(button_encoder).state)
           {
             id(return_to_last_saved_page_with_delay).stop();
             id(is_menu_visible) = true;
@@ -840,10 +886,10 @@ script:
           {
             id(return_to_last_saved_page_with_delay).stop();
 
-            // Show update available page
             id(is_menu_detail_visible) = false;
             id(is_menu_visible) = false;
 
+            // Show update available page
             id(main_display).show_page(id(page_update_available));
             id(wake_display_and_reset_timer).execute();
 
@@ -854,6 +900,30 @@ script:
             call.set_brightness(0.8f);
             call.perform();
           }
+
+  # Show custom notification (received via MQTT)
+  - id: show_notification
+    parameters:
+      title: string
+      message: string
+      timeout: uint32_t
+      show_border: bool
+      #show_button: bool # todo
+    then:
+      - lambda: |-
+          id(return_to_last_saved_page_with_delay).stop();
+
+          id(notification_title) = title;
+          id(notification_message) = message;
+          id(notification_timeout) = timeout;
+          id(notification_show_border) = show_border;
+          id(notification_start_time) = millis();
+
+          id(is_menu_detail_visible) = false;
+          id(is_menu_visible) = false;
+
+          id(main_display).show_page(id(page_notification));
+          id(wake_display_and_reset_timer).execute();
 
   # Update all graph durations and grid spacing
   - id: update_graph_durations
@@ -1061,7 +1131,7 @@ interval:
     then:
       - if:
           condition:
-            lambda: "return id(is_boot_complete) && !id(ens160_sensor_ready);"
+            lambda: "return (id(is_boot_complete) && !id(ens160_sensor_ready));"
           then:
             - animation.next_frame: animation_spinner2
 
@@ -1074,6 +1144,19 @@ interval:
             update.is_available: update_firmware_component_http
           then:
             - script.execute: show_update_available
+
+  # Custom notification timeout
+  - interval: 500ms
+    then:
+      - if:
+          condition:
+            lambda: "return (id(main_display).get_active_page() == id(page_notification) && id(notification_timeout) > 0);"
+          then:
+            - lambda: |-
+                const uint32_t elapsed = millis() - id(notification_start_time);
+
+                if (elapsed >= id(notification_timeout) * 1000)
+                  id(return_to_current_dashboard).execute();
 
   # Fetch location quickly at the beginning
   - interval: 12s
@@ -2039,6 +2122,168 @@ display:
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
 
       # ============================================
+      # NOTIFICATION PAGE
+      # ============================================
+      - id: page_notification
+        lambda: |-
+          // ============================================
+          // CONFIGURATION
+          // ============================================
+          const float SCROLL_DOWN_SPEED = 15.0f;     // pixels per second
+          const float SCROLL_UP_SPEED = 40.0f;       // pixels per second
+          const float PAUSE_AT_TOP = 1.0f;           // seconds
+          const float PAUSE_AT_BOTTOM = 1.5f;        // seconds
+
+          const uint8_t MESSAGE_Y_START = 15;
+          const uint8_t LINE_HEIGHT = 9;
+          const uint8_t MAX_WIDTH = 124;
+          const uint8_t VISIBLE_LINES = 3;
+          const uint8_t VISIBLE_HEIGHT = 30;
+
+          // ============================================
+          // BORDER & TITLE
+          // ============================================
+          if (id(notification_show_border))
+            it.rectangle(0, 0, 128, 64);
+
+          it.printf(64, -2, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", id(notification_title).c_str());
+
+          // ============================================
+          // WORD WRAP
+          // ============================================
+          std::string msg = id(notification_message);
+          std::vector<std::string> lines;
+          std::string current_line = "";
+          std::string word = "";
+
+          for (size_t i = 0; i <= msg.length(); i++)
+          {
+            char c = (i < msg.length()) ? msg[i] : ' ';
+
+            if (c == ' ' || c == '\n' || c == '\t' || i == msg.length())
+            {
+              if (!word.empty())
+              {
+                std::string test_line = current_line.empty() ? word : current_line + " " + word;
+                int x1, y1, w, h;
+                it.get_text_bounds(0, 0, test_line.c_str(), id(font6x12),
+                                  TextAlign::TOP_LEFT, &x1, &y1, &w, &h);
+
+                if (w > MAX_WIDTH)
+                {
+                  if (!current_line.empty())
+                  {
+                    lines.push_back(current_line);
+                    current_line = word;
+                  }
+                  else
+                  {
+                    lines.push_back(word);
+                    current_line = "";
+                  }
+                }
+                else
+                  current_line = test_line;
+
+                word = "";
+              }
+
+              if (c == '\n' && !current_line.empty())
+              {
+                lines.push_back(current_line);
+                current_line = "";
+              }
+            }
+            else
+              word += c;
+          }
+
+          if (!current_line.empty())
+            lines.push_back(current_line);
+
+          // ============================================
+          // CONSTANT SPEED SCROLLING
+          // ============================================
+          static float scroll_offset = 0.0f;
+          static uint32_t phase_start_time = 0;
+          static int phase = 0;  // 0=pause_top, 1=scroll_down, 2=pause_bottom, 3=scroll_up
+          static std::string last_msg = "";
+
+          if (msg != last_msg) // Todo: proper reset if message is same
+          {
+            scroll_offset = 0.0f;
+            phase = 0;
+            phase_start_time = millis();
+            last_msg = msg;
+          }
+
+          if (lines.size() > VISIBLE_LINES)
+          {
+            const float max_scroll = (lines.size() * LINE_HEIGHT) - VISIBLE_HEIGHT;
+            const float elapsed = (millis() - phase_start_time) / 1000.0f;
+
+            switch (phase)
+            {
+              case 0:  // Pause at top
+                if (elapsed >= PAUSE_AT_TOP)
+                {
+                  phase = 1;
+                  phase_start_time = millis();
+                }
+                break;
+
+              case 1:  // Scroll down
+                scroll_offset += SCROLL_DOWN_SPEED * 0.03f;  // ~30ms per frame
+                if (scroll_offset >= max_scroll)
+                {
+                  scroll_offset = max_scroll;
+                  phase = 2;
+                  phase_start_time = millis();
+                }
+                break;
+
+              case 2:  // Pause at bottom
+                if (elapsed >= PAUSE_AT_BOTTOM)
+                {
+                  phase = 3;
+                  phase_start_time = millis();
+                }
+                break;
+
+              case 3:  // Scroll up
+                scroll_offset -= SCROLL_UP_SPEED * 0.03f;  // ~30ms per frame
+                if (scroll_offset <= 0.0f)
+                {
+                  scroll_offset = 0.0f;
+                  phase = 0;
+                  phase_start_time = millis();
+                }
+                break;
+            }
+          }
+          else
+            scroll_offset = 0.0f;
+
+          // ============================================
+          // DRAW TEXT
+          // ============================================
+          for (size_t i = 0; i < lines.size(); i++)
+          {
+            int y_pos = MESSAGE_Y_START + (i * LINE_HEIGHT) - (int)scroll_offset;
+
+            if (y_pos >= MESSAGE_Y_START - LINE_HEIGHT && y_pos < MESSAGE_Y_START + VISIBLE_HEIGHT)
+              it.printf(64, y_pos, id(font6x12), TextAlign::TOP_CENTER, "%s", lines[i].c_str());
+          }
+
+          // ============================================
+          // DISMISS BUTTON
+          // ============================================
+          const uint32_t button_width = 65;
+          const uint32_t button_height = 16;
+          it.filled_rectangle(64 - (button_width / 2), 48, button_width, button_height);
+          it.printf(64, 51, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "DISMISS");
+
+      # ============================================
       # MENU
       # ============================================
       - id: page_menu
@@ -2917,6 +3162,7 @@ sensor:
       - lambda: return min(max(2.0f * (x + 100.0f), 0.0f), 100.0f);
     unit_of_measurement: "%"
     entity_category: "diagnostic"
+    device_class: ""
 
   # --- Environmental Sensors ---
 
@@ -2997,7 +3243,8 @@ sensor:
             if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
                 || id(main_display).get_active_page() == id(page_is_restarting)
                 || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-                || id(main_display).get_active_page() == id(page_is_updating))
+                || id(main_display).get_active_page() == id(page_is_updating)
+                || id(main_display).get_active_page() == id(page_notification))
               return;
 
             if (id(is_menu_visible))
@@ -3067,7 +3314,8 @@ sensor:
             if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
                 || id(main_display).get_active_page() == id(page_is_restarting)
                 || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-                || id(main_display).get_active_page() == id(page_is_updating))
+                || id(main_display).get_active_page() == id(page_is_updating)
+                || id(main_display).get_active_page() == id(page_notification))
               return;
 
             if (id(is_menu_visible))
@@ -3273,6 +3521,57 @@ text_sensor:
           default: return {"Not Available"};
       }
 
+  # Custom Notification over MQTT (JSON payload)
+  - platform: mqtt_subscribe
+    name: "Custom Notification"
+    id: mqtt_custom_notification
+    topic: "obsidianhub/notification"
+    internal: true
+    on_value:
+      then:
+        - lambda: |-
+            std::string title = "Notification";
+            std::string message = "";
+            int32_t timeout = 0;
+            bool show_border = true;
+
+            json::parse_json(x, [&](JsonObject root) -> bool {
+              if (root["title"].is<const char*>())
+                title = root["title"].as<const char*>();
+
+              if (root["message"].is<const char*>())
+                message = root["message"].as<const char*>();
+
+              // Support timeout as int and string
+              if (root["timeout"].is<int32_t>())
+                timeout = max(root["timeout"].as<int32_t>(), 0l);
+              else if (root["timeout"].is<const char*>())
+                timeout = max(atoi(root["timeout"].as<const char*>()), 0);
+
+              // Support show_border as bool, string or int (false, "false", 0, "0")
+              if (root["border"].is<bool>())
+              {
+                show_border = root["border"].as<bool>();
+              }
+              else if (root["border"].is<const char*>())
+              {
+                std::string border_str = root["border"].as<const char*>();
+                show_border = (border_str == "true" || border_str == "1");
+              }
+              else if (root["border"].is<int>())
+              {
+                show_border = root["border"].as<int>() != 0;
+              }
+
+              return true;
+            });
+
+            // Show notification if we have a message and are not on update available page
+            if (!message.empty() && id(main_display).get_active_page() != id(page_update_available))
+              id(show_notification)->execute(title, message, timeout, show_border);
+            else
+              ESP_LOGW("notification", "Notification ignored - empty message or on update available page");
+
 ###############################################################
 # Binary Sensors (Physical Buttons)
 ###############################################################
@@ -3319,16 +3618,12 @@ binary_sensor:
     on_press:
       then:
         - lambda: |-
-            // Do nothing if still booting, on WiFi AP mode page, update (available) page or restart page
-            if (!id(is_boot_complete)
-                || id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
-                || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-                || id(main_display).get_active_page() == id(page_is_restarting)
-                || id(main_display).get_active_page() == id(page_is_updating))
+            // Do nothing if still booting
+            if (!id(is_boot_complete))
               return;
 
-            // Only ignore next short press if display is asleep
-            // (not just fading out into sleep or only LEDs sleeping)
+            // Only ignore next short press if display is sleeping
+            // Not just fading out into sleep/only LEDs sleeping
             if (id(is_display_sleeping))
               id(ignore_next_encoder_button_press_after_wake_up) = true;
 
@@ -3411,6 +3706,13 @@ binary_sensor:
 
                 id(is_menu_detail_visible) = false;
                 id(is_menu_visible) = false;
+
+                return;
+              }
+              else if (id(main_display).get_active_page() == id(page_notification))
+              {
+                // Dismiss notification
+                id(return_to_current_dashboard).execute();
 
                 return;
               }
@@ -3568,6 +3870,7 @@ number:
               || id(main_display).get_active_page() == id(page_wifi_ap_mode)
               || id(main_display).get_active_page() == id(page_is_updating)
               || id(main_display).get_active_page() == id(page_update_available)
+              || id(main_display).get_active_page() == id(page_notification)
               || id(is_menu_visible))
             return;
 
