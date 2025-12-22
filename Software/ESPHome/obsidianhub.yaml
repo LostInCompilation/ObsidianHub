@@ -58,6 +58,11 @@ substitutions:
   # API Key for OpenWeatherMap
   openweathermap_api_key: !secret openweathermap_api_key
 
+
+  # ----------------------------------
+  # API Key for HomeAssistant
+  api_encryption_key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
+
 ###############################################################
 # Dashboard Import for easy ESPHome Device Builder usage
 ###############################################################
@@ -121,7 +126,7 @@ logger:
 api:
   id: api_component
   encryption:
-    key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
+    key: ${api_encryption_key}
 
   # Debug
   # on_client_connected:
@@ -240,7 +245,7 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 2min
+    update_interval: 2min # todo
     device_class: "firmware"
     entity_category: "config"
     on_update_available:
@@ -262,9 +267,9 @@ wifi:
   on_connect:
     then:
       - lambda: |-
+          // Show dashboard and set status LED to green on first WiFi connect after successful setup
           if (!id(wifi_has_been_setup_by_user) || id(main_display).get_active_page() == id(page_wifi_ap_mode))
           {
-            // Show dashboard and set status LED to green
             id(is_menu_detail_visible) = false;
             id(is_menu_visible) = false;
 
@@ -529,6 +534,11 @@ globals:
     restore_value: no
     initial_value: "true"
 
+  - id: notification_button_text
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
 ###############################################################
 # Fonts
 ###############################################################
@@ -589,6 +599,7 @@ font:
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
     # Use all glyphs since this font is used for custom notification text
+    # ToDo
     #glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:°/|-0123456789\u0025"
 
   # --- Headers ---
@@ -908,7 +919,7 @@ script:
       message: string
       timeout: uint32_t
       show_border: bool
-      #show_button: bool # todo
+      button_text: string
     then:
       - lambda: |-
           id(return_to_last_saved_page_with_delay).stop();
@@ -917,6 +928,7 @@ script:
           id(notification_message) = message;
           id(notification_timeout) = timeout;
           id(notification_show_border) = show_border;
+          id(notification_button_text) = button_text;
           id(notification_start_time) = millis();
 
           id(is_menu_detail_visible) = false;
@@ -1298,250 +1310,237 @@ interval:
 
           const uint32_t now = millis();
 
-          // ============================================
+          // ========================================================
           // BOOT SEQUENCE: Fade in logo -> hold -> show dashboard
-          // ============================================
+          // ========================================================
           if (!id(is_boot_complete))
           {
-              if (fade_start == 0)
-                  fade_start = now;
+            if (fade_start == 0)
+              fade_start = now;
 
-              // Fade in phase
-              if (!fade_done)
+            // Fade in phase
+            if (!fade_done)
+            {
+              const uint32_t elapsed = now - fade_start;
+              const float progress = elapsed * INV_FADE_DURATION;
+              const float correctedValue = pow(progress, GAMMA);
+
+              if (elapsed < FADE_DURATION_MS && correctedValue < id(display_brightness))
               {
-                  const uint32_t elapsed = now - fade_start;
-                  const float progress = elapsed * INV_FADE_DURATION;
-                  const float correctedValue = pow(progress, GAMMA);
-
-                  if (elapsed < FADE_DURATION_MS && correctedValue < id(display_brightness))
-                  {
-                      id(main_display).set_contrast(correctedValue);
-                  }
-                  else
-                  {
-                      fade_done = true;
-                      hold_start = now;
-                      id(main_display).set_contrast(id(display_brightness));
-                  }
+                id(main_display).set_contrast(correctedValue);
               }
-              else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase complete
+              else
               {
-                  // Publish initial config values
-                  id(config_display_brightness).publish_state((int32_t)(id(display_brightness) * 100.0f));
-                  id(config_auto_sleep).publish_state(id(sleep_timeout_milliseconds) / 1000);
-
-                  id(is_boot_complete) = true;
-                  id(last_interaction_time_ms) = now;
-
-                  // Show dashboard or WiFi setup page if it hasn't been set up by user already
-                  if (id(wifi_has_been_setup_by_user))
-                  {
-                      id(main_display).show_page(id(page_main_dashboard));
-                  }
-                  else
-                  {
-                      id(main_display).show_page(id(page_wifi_ap_mode));
-
-                      // Init LEDs for WiFi setup mode
-                      auto call = id(led_status).turn_on();
-                      call.set_effect("Blue Pulse");
-                      call.set_rgb(0.0f, 0.0f, 1.0f);
-                      call.set_brightness(0.8f);
-                      call.perform();
-
-                      // Key LEDs
-                      call = id(led_key1).turn_on();
-                      call.set_rgb(1.0f, 1.0f, 1.0f);
-                      call.set_brightness(0.7f);
-                      call.perform();
-
-                      call = id(led_key2).turn_on();
-                      call.set_rgb(1.0f, 1.0f, 1.0f);
-                      call.set_brightness(0.7f);
-                      call.perform();
-                  }
+                fade_done = true;
+                hold_start = now;
+                id(main_display).set_contrast(id(display_brightness));
               }
+            }
+            else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase complete
+            {
+              // Publish initial config values
+              id(config_display_brightness).publish_state((int32_t)(id(display_brightness) * 100.0f));
+              id(config_auto_sleep).publish_state(id(sleep_timeout_milliseconds) / 1000);
+
+              id(is_boot_complete) = true;
+              id(last_interaction_time_ms) = now;
+
+              // Show dashboard or WiFi setup page if it hasn't been set up by user already
+              if (id(wifi_has_been_setup_by_user))
+              {
+                id(main_display).show_page(id(page_main_dashboard));
+              }
+              else
+              {
+                id(main_display).show_page(id(page_wifi_ap_mode));
+
+                // Init LEDs for WiFi setup mode
+                auto call = id(led_status).turn_on();
+                call.set_effect("Blue Pulse");
+                call.set_rgb(0.0f, 0.0f, 1.0f);
+                call.set_brightness(0.8f);
+                call.perform();
+
+                // Key LEDs
+                call = id(led_key1).turn_on();
+                call.set_rgb(1.0f, 1.0f, 1.0f);
+                call.set_brightness(0.7f);
+                call.perform();
+
+                call = id(led_key2).turn_on();
+                call.set_rgb(1.0f, 1.0f, 1.0f);
+                call.set_brightness(0.7f);
+                call.perform();
+              }
+            }
           }
-          // ============================================
+          // ================================================
           // AUTO-SLEEP: Fade out after inactivity timeout
-          // ============================================
-          else if (id(sleep_timeout_milliseconds) > 0)
+          // ================================================
+          // This huge if-statement is necessary (sadly) since we cant use early returns here
+          else if (id(sleep_timeout_milliseconds) > 0
+                    && (!id(is_display_sleeping) || !id(is_led_sleeping))
+                    && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
+                    && id(main_display).get_active_page() != id(page_is_restarting)
+                    && id(main_display).get_active_page() != id(page_wifi_ap_mode)
+                    && id(main_display).get_active_page() != id(page_is_updating)
+                    && id(main_display).get_active_page() != id(page_notification))
           {
-              // Skip if both are sleeping already
-              if (id(is_display_sleeping) && id(is_led_sleeping))
-                return;
+            const bool any_button_held = id(button_encoder).state ||
+                                      id(button_left).state ||
+                                      id(button_right).state;
 
-              // Skip auto-sleep on certain pages
-              auto page = id(main_display).get_active_page();
-              if (page == id(page_graph_duration_restart_confirm) ||
-                  page == id(page_is_restarting) ||
-                  page == id(page_wifi_ap_mode) ||
-                  page == id(page_is_updating))
-                  return;
+            // If any button is held, reset the timer to prevent sleep
+            if (any_button_held)
+            {
+              id(last_interaction_time_ms) = now;
 
-              const bool any_button_held = id(button_encoder).state ||
-                                        id(button_left).state ||
-                                        id(button_right).state;
-
-              // If any button is held, reset the timer to prevent sleep
-              if (any_button_held)
+              // Cancel fade out if in progress
+              if (id(is_fade_out_in_progress))
               {
-                  id(last_interaction_time_ms) = now;
-
-                  // Cancel fade out if in progress
-                  if (id(is_fade_out_in_progress))
-                  {
-                      id(is_fade_out_in_progress) = false;
-                      id(main_display).set_contrast(id(display_brightness));
-                  }
-
-                  return;
+                id(is_fade_out_in_progress) = false;
+                id(main_display).set_contrast(id(display_brightness));
               }
 
-              // Sleep components
-              const char* sleep_option = id(select_sleep_components).current_option();
-              const bool sleep_display = (strcmp(sleep_option, "Both") == 0 || strcmp(sleep_option, "Display") == 0);
-              const bool sleep_leds = (strcmp(sleep_option, "Both") == 0 || strcmp(sleep_option, "LEDs") == 0);
+              return;
+            }
 
-              const uint32_t idle_time = now - id(last_interaction_time_ms);
-              const bool timeout_reached = (idle_time >= id(sleep_timeout_milliseconds));
+            // Sleep components
+            const char* sleep_option = id(select_sleep_components).current_option();
+            const bool sleep_display = (strcmp(sleep_option, "Both") == 0 || strcmp(sleep_option, "Display") == 0);
+            const bool sleep_leds = (strcmp(sleep_option, "Both") == 0 || strcmp(sleep_option, "LEDs") == 0);
 
-              // Display fade out
-              if (sleep_display && !id(is_display_sleeping))
+            const uint32_t idle_time = now - id(last_interaction_time_ms);
+            const bool timeout_reached = (idle_time >= id(sleep_timeout_milliseconds));
+
+            // Display fade out
+            if (sleep_display && !id(is_display_sleeping))
+            {
+              if (timeout_reached && !id(is_fade_out_in_progress))
               {
-                  if (timeout_reached && !id(is_fade_out_in_progress))
-                  {
-                      id(is_fade_out_in_progress) = true;
-                      fade_start = now;
-                  }
-
-                  // Perform fade out
-                  if (id(is_fade_out_in_progress))
-                  {
-                      const uint32_t elapsed = now - fade_start;
-
-                      if (elapsed < FADE_DURATION_MS)
-                      {
-                          // Fading
-                          const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
-                          const float gamma_corrected = pow(progress, GAMMA) * id(main_display).get_contrast();
-                          id(main_display).set_contrast(gamma_corrected);
-                      }
-                      else
-                      {
-                          // Fade complete
-                          id(is_fade_out_in_progress) = false;
-                          id(main_display).set_contrast(0.0f);
-                          id(main_display).stop_poller();
-                          id(is_display_sleeping) = true;
-                      }
-                  }
+                id(is_fade_out_in_progress) = true;
+                fade_start = now;
               }
 
-              // LEDs
-              if (sleep_leds && timeout_reached && !id(is_led_sleeping))
+              // Perform fade out
+              if (id(is_fade_out_in_progress))
               {
-                  id(led_status).turn_off().perform();
-                  id(led_key1).turn_off().perform();
-                  id(led_key2).turn_off().perform();
-                  id(is_led_sleeping) = true;
+                const uint32_t elapsed = now - fade_start;
+
+                if (elapsed < FADE_DURATION_MS)
+                {
+                  // Fading
+                  const float progress = 1.0f - (elapsed * INV_FADE_DURATION);
+                  const float gamma_corrected = pow(progress, GAMMA) * id(main_display).get_contrast();
+                  id(main_display).set_contrast(gamma_corrected);
+                }
+                else
+                {
+                  // Fade complete
+                  id(is_fade_out_in_progress) = false;
+                  id(main_display).set_contrast(0.0f);
+                  id(main_display).stop_poller();
+                  id(is_display_sleeping) = true;
+                }
               }
+            }
+
+            // LEDs
+            if (sleep_leds && timeout_reached && !id(is_led_sleeping))
+            {
+              id(led_status).turn_off().perform();
+              id(led_key1).turn_off().perform();
+              id(led_key2).turn_off().perform();
+              id(is_led_sleeping) = true;
+            }
           }
 
-          // ============================================
+          // =============================================
           // AUTO-DIM: Smooth fade to ambient brightness
-          // ============================================
-          // Reset to default brightness if sensor loses state during fade
-          if (auto_dim_fade_in_progress && !id(sensor_brightness).has_state())
-          {
-              auto_dim_fade_in_progress = false;
-              auto_dim_target_brightness = -1.0f;
-              id(main_display).set_contrast(id(display_brightness));
-          }
-
+          // =============================================
           if (id(is_boot_complete)
               && id(switch_auto_dim_display).state
               && !id(is_display_sleeping)
               && !id(is_fade_out_in_progress)
               && id(sensor_brightness).has_state()
               && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm)
-              && id(main_display).get_active_page() != id(page_wifi_ap_mode)
               && id(main_display).get_active_page() != id(page_is_restarting)
+              && id(main_display).get_active_page() != id(page_wifi_ap_mode)
               && id(main_display).get_active_page() != id(page_is_updating))
           {
-              const uint32_t idle_time = now - id(last_interaction_time_ms);
+            const uint32_t idle_time = now - id(last_interaction_time_ms);
 
-              // Check if user just interacted - cancel auto-dim and reset state
-              if (idle_time < AUTO_DIM_DELAY_MS)
+            // Check if user just interacted - cancel auto-dim and reset state
+            if (idle_time < AUTO_DIM_DELAY_MS)
+            {
+              if (auto_dim_fade_in_progress || auto_dim_target_brightness >= 0.0f)
               {
-                  if (auto_dim_fade_in_progress || auto_dim_target_brightness >= 0.0f)
-                  {
-                      auto_dim_fade_in_progress = false;
-                      auto_dim_target_brightness = -1.0f;
-                      auto_dim_start_brightness = -1.0f;
-                      id(main_display).set_contrast(id(display_brightness));
-                  }
+                auto_dim_fade_in_progress = false;
+                auto_dim_target_brightness = -1.0f;
+                auto_dim_start_brightness = -1.0f;
+                id(main_display).set_contrast(id(display_brightness));
               }
+            }
 
-              // Check brightness sensor every AUTO_DIM_CHECK_INTERVAL_MS
-              if (now - last_auto_dim_check >= AUTO_DIM_CHECK_INTERVAL_MS)
+            // Check brightness sensor every AUTO_DIM_CHECK_INTERVAL_MS
+            if (now - last_auto_dim_check >= AUTO_DIM_CHECK_INTERVAL_MS)
+            {
+              last_auto_dim_check = now;
+
+              // Start auto-dim after AUTO_DIM_DELAY_MS of inactivity
+              if (idle_time >= AUTO_DIM_DELAY_MS)
               {
-                  last_auto_dim_check = now;
+                const float env_brightness = id(sensor_brightness).state;
+                float new_target = -1.0f;
 
-                  // Start auto-dim after AUTO_DIM_DELAY_MS of inactivity
-                  if (idle_time >= AUTO_DIM_DELAY_MS)
-                  {
-                      const float env_brightness = id(sensor_brightness).state;
-                      float new_target = -1.0f;
+                if (env_brightness <= 0.5f)
+                {
+                  // Darkness, dim to low brightness
+                  new_target = 0.1f;
+                }
+                else if (env_brightness <= 2.0f)
+                {
+                  // Dim a little (half the set brightness)
+                  new_target = max(id(display_brightness) / 2.0f, 0.1f);
+                }
+                else
+                {
+                  // No dim
+                  new_target = id(display_brightness);
+                }
 
-                      if (env_brightness <= 0.5f)
-                      {
-                          // Darkness, dim to low brightness
-                          new_target = 0.1f;
-                      }
-                      else if (env_brightness <= 2.0f)
-                      {
-                          // Dim a little (half the set brightness)
-                          new_target = max(id(display_brightness) / 2.0f, 0.1f);
-                      }
-                      else
-                      {
-                          // No dim
-                          new_target = id(display_brightness);
-                      }
-
-                      // Only start new fade if target changed
-                      if (new_target != auto_dim_target_brightness)
-                      {
-                          auto_dim_target_brightness = new_target;
-                          auto_dim_start_brightness = id(main_display).get_contrast();
-                          auto_dim_fade_start = now;
-                          auto_dim_fade_in_progress = true;
-                      }
-                  }
+                // Only start new fade if target changed
+                if (new_target != auto_dim_target_brightness)
+                {
+                  auto_dim_target_brightness = new_target;
+                  auto_dim_start_brightness = id(main_display).get_contrast();
+                  auto_dim_fade_start = now;
+                  auto_dim_fade_in_progress = true;
+                }
               }
+            }
 
-              // Perform auto-dim fade
-              if (auto_dim_fade_in_progress && auto_dim_target_brightness >= 0.0f)
+            // Perform auto-dim fade
+            if (auto_dim_fade_in_progress && auto_dim_target_brightness >= 0.0f)
+            {
+              const uint32_t elapsed = now - auto_dim_fade_start;
+
+              if (elapsed < FADE_DURATION_MS)
               {
-                  const uint32_t elapsed = now - auto_dim_fade_start;
-
-                  if (elapsed < FADE_DURATION_MS)
-                  {
-                      // Fading
-                      const float progress = elapsed * INV_FADE_DURATION;
-                      const float gamma_corrected = pow(progress, GAMMA);
-                      const float current_brightness = auto_dim_start_brightness +
-                                                       (auto_dim_target_brightness - auto_dim_start_brightness) * gamma_corrected;
-                      id(main_display).set_contrast(current_brightness);
-                  }
-                  else
-                  {
-                      // Fade complete
-                      id(main_display).set_contrast(auto_dim_target_brightness);
-                      auto_dim_fade_in_progress = false;
-                  }
+                // Fading
+                const float progress = elapsed * INV_FADE_DURATION;
+                const float gamma_corrected = pow(progress, GAMMA);
+                const float current_brightness = auto_dim_start_brightness +
+                                                  (auto_dim_target_brightness - auto_dim_start_brightness) * gamma_corrected;
+                id(main_display).set_contrast(current_brightness);
               }
+              else
+              {
+                // Fade complete
+                id(main_display).set_contrast(auto_dim_target_brightness);
+                auto_dim_fade_in_progress = false;
+              }
+            }
           }
 
 ###############################################################
@@ -1813,7 +1812,7 @@ display:
           uint32_t value_x = 19;
           std::string value_str = str_sprintf("%u", (uint32_t)id(sensor_eco2).state);
           int x1, y1, value_width, value_height;
-          it.get_text_bounds(value_x, 65, value_str.c_str(), id(font_eco2_tvoc_values),
+          it.get_text_bounds(0, 0, value_str.c_str(), id(font_eco2_tvoc_values),
                             TextAlign::BOTTOM_CENTER, &x1, &y1, &value_width, &value_height);
 
           uint32_t unit_x = value_x + (value_width / 2) + 3;
@@ -1827,7 +1826,7 @@ display:
           // Get the width of the value text
           value_x = 88;
           value_str = str_sprintf("%u", (uint32_t)id(sensor_tvoc).state);
-          it.get_text_bounds(value_x, 65, value_str.c_str(), id(font_eco2_tvoc_values),
+          it.get_text_bounds(0, 0, value_str.c_str(), id(font_eco2_tvoc_values),
                             TextAlign::BOTTOM_CENTER, &x1, &y1, &value_width, &value_height);
 
           unit_x = value_x + (value_width / 2) + 3;
@@ -2080,7 +2079,7 @@ display:
             strcpy(ticker_text, new_ticker);
 
             int bx, by, bw, bh;
-            it.get_text_bounds(0, TICKER_Y, ticker_text, id(font6x12),
+            it.get_text_bounds(0, 0, ticker_text, id(font6x12),
                               TextAlign::BOTTOM_LEFT, &bx, &by, &bw, &bh);
 
             ticker_width = bw;
@@ -2276,12 +2275,24 @@ display:
           }
 
           // ============================================
-          // DISMISS BUTTON
+          // BUTTON
           // ============================================
-          const uint32_t button_width = 65;
-          const uint32_t button_height = 16;
-          it.filled_rectangle(64 - (button_width / 2), 48, button_width, button_height);
-          it.printf(64, 51, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "DISMISS");
+          if (id(notification_button_text) != "")
+          {
+            const uint32_t button_height = 11;
+            const uint32_t button_padding = 10;  // Padding on each side of text
+
+            // Calculate button width based on text
+            int text_x1, text_y1, text_width, text_height;
+            it.get_text_bounds(0, 0, id(notification_button_text).c_str(), id(font7x13B),
+                              TextAlign::TOP_LEFT, &text_x1, &text_y1, &text_width, &text_height);
+
+            const uint32_t button_width = text_width + (button_padding * 2);
+
+            // Draw button
+            it.filled_rectangle(64 - (button_width / 2), 51, button_width, button_height);
+            it.printf(64, 51, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "%s", id(notification_button_text).c_str());
+          }
 
       # ============================================
       # MENU
@@ -3183,7 +3194,7 @@ sensor:
   # BMP280: Atmospheric pressure
   - platform: bmp280_i2c
     address: 0x77
-    update_interval: 15s
+    update_interval: 30s
     iir_filter: 4x
     pressure:
       name: "Atmospheric Pressure"
@@ -3243,9 +3254,16 @@ sensor:
             if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
                 || id(main_display).get_active_page() == id(page_is_restarting)
                 || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-                || id(main_display).get_active_page() == id(page_is_updating)
-                || id(main_display).get_active_page() == id(page_notification))
+                || id(main_display).get_active_page() == id(page_is_updating))
               return;
+
+            // Needed since we don't sleep on notification page
+            // but we do auto dimming, so we need to wake up the display again
+            if (id(main_display).get_active_page() == id(page_notification))
+            {
+              id(wake_display_and_reset_timer).execute();
+              return;
+            }
 
             if (id(is_menu_visible))
             {
@@ -3314,9 +3332,16 @@ sensor:
             if (id(main_display).get_active_page() == id(page_graph_duration_restart_confirm)
                 || id(main_display).get_active_page() == id(page_is_restarting)
                 || id(main_display).get_active_page() == id(page_wifi_ap_mode)
-                || id(main_display).get_active_page() == id(page_is_updating)
-                || id(main_display).get_active_page() == id(page_notification))
+                || id(main_display).get_active_page() == id(page_is_updating))
               return;
+
+            // Needed since we don't sleep on notification page
+            // but we do auto dimming, so we need to wake up the display again
+            if (id(main_display).get_active_page() == id(page_notification))
+            {
+              id(wake_display_and_reset_timer).execute();
+              return;
+            }
 
             if (id(is_menu_visible))
             {
@@ -3518,7 +3543,7 @@ text_sensor:
           case 3: return {"Moderate"};
           case 4: return {"Poor"};
           case 5: return {"Unhealthy"};
-          default: return {"Not Available"};
+          default: return {"Unknown"};
       }
 
   # Custom Notification over MQTT (JSON payload)
@@ -3532,7 +3557,8 @@ text_sensor:
         - lambda: |-
             std::string title = "Notification";
             std::string message = "";
-            int32_t timeout = 0;
+            std::string button_text = "OK";
+            uint32_t timeout = 0;
             bool show_border = true;
 
             json::parse_json(x, [&](JsonObject root) -> bool {
@@ -3549,28 +3575,41 @@ text_sensor:
                 timeout = max(atoi(root["timeout"].as<const char*>()), 0);
 
               // Support show_border as bool, string or int (false, "false", 0, "0")
-              if (root["border"].is<bool>())
+              if (root["show_border"].is<bool>())
               {
-                show_border = root["border"].as<bool>();
+                show_border = root["show_border"].as<bool>();
               }
-              else if (root["border"].is<const char*>())
+              else if (root["show_border"].is<const char*>())
               {
-                std::string border_str = root["border"].as<const char*>();
+                std::string border_str = root["show_border"].as<const char*>();
                 show_border = (border_str == "true" || border_str == "1");
               }
-              else if (root["border"].is<int>())
+              else if (root["show_border"].is<int>())
               {
-                show_border = root["border"].as<int>() != 0;
+                show_border = root["show_border"].as<int>() != 0;
               }
+
+              // Button text
+              if (root["button_text"].is<const char*>())
+                button_text = root["button_text"].as<const char*>();
 
               return true;
             });
 
-            // Show notification if we have a message and are not on update available page
-            if (!message.empty() && id(main_display).get_active_page() != id(page_update_available))
-              id(show_notification)->execute(title, message, timeout, show_border);
+            // Show notification if we have a message and are not on certain pages
+            if (!message.empty()
+                && id(main_display).get_active_page() != id(page_update_available)
+                && id(main_display).get_active_page() != id(page_is_updating)
+                && id(main_display).get_active_page() != id(page_wifi_ap_mode)
+                && id(main_display).get_active_page() != id(page_is_restarting)
+                && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm))
+            {
+              id(show_notification)->execute(title, message, timeout, show_border, button_text);
+            }
             else
-              ESP_LOGW("notification", "Notification ignored - empty message or on update available page");
+            {
+              ESP_LOGW("notification", "Notification ignored - empty message or currently showing update available page");
+            }
 
 ###############################################################
 # Binary Sensors (Physical Buttons)
