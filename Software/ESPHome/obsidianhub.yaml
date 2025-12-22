@@ -11,17 +11,14 @@
 
 # ToDo:
 # - Rising falling trends
-# - Notification over mqtt (custom)
 # - Timer
 # - Brightness sync on boot fix
 # - Graph range and grid
 # - Graph show min max values
 # - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
-# - Reset menu after notification pop up (menu gets hidden but not reset to root item); same issue on other transitions that manually hide the menu
 
 # Notification:
 # Check ignore interactions on notification page!
-# Button show/hide
 # Auto font size (bigger font if short message)+
 # Scroll time based on num of lines
 # Cap off very long messages
@@ -539,6 +536,11 @@ globals:
     restore_value: no
     initial_value: '""'
 
+  - id: notification_needs_scroll_reset
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
 ###############################################################
 # Fonts
 ###############################################################
@@ -856,10 +858,16 @@ script:
               || id(is_menu_detail_visible))
             return;
 
-          // Open menu if still pressed
+          // Open menu at root item if still pressed
           if (id(button_encoder).state)
           {
             id(return_to_last_saved_page_with_delay).stop();
+
+            // Select root item and only set menu active for processing user actions
+            id(main_menu).show_main();
+            id(main_menu).hide();
+            id(main_menu).set_active(true);
+
             id(is_menu_visible) = true;
             id(is_menu_detail_visible) = false;
             id(main_display).show_page(id(page_menu));
@@ -930,6 +938,7 @@ script:
           id(notification_show_border) = show_border;
           id(notification_button_text) = button_text;
           id(notification_start_time) = millis();
+          id(notification_needs_scroll_reset) = true;
 
           id(is_menu_detail_visible) = false;
           id(is_menu_visible) = false;
@@ -1158,7 +1167,7 @@ interval:
             - script.execute: show_update_available
 
   # Custom notification timeout
-  - interval: 500ms
+  - interval: 250ms
     then:
       - if:
           condition:
@@ -2121,177 +2130,259 @@ display:
             it.filled_rectangle(BAR_X + 2, BAR_Y + 2, fill_w, BAR_H - 4);
 
       # ============================================
-      # NOTIFICATION PAGE
+      # NOTIFICATION PAGE DISPLAY
       # ============================================
       - id: page_notification
         lambda: |-
           // ============================================
-          // CONFIGURATION
+          // Configuration constants
           // ============================================
-          const float SCROLL_DOWN_SPEED = 15.0f;     // pixels per second
-          const float SCROLL_UP_SPEED = 40.0f;       // pixels per second
-          const float PAUSE_AT_TOP = 1.0f;           // seconds
-          const float PAUSE_AT_BOTTOM = 1.5f;        // seconds
+          const uint8_t TITLE_BOTTOM = 14;
+          const uint8_t TEXT_TOP_PADDING = 0;
+          const uint8_t TEXT_CLIP_TOP = TITLE_BOTTOM + 3;
+          const uint8_t TEXT_START_Y = TITLE_BOTTOM + TEXT_TOP_PADDING;
 
-          const uint8_t MESSAGE_Y_START = 15;
-          const uint8_t LINE_HEIGHT = 9;
-          const uint8_t MAX_WIDTH = 124;
-          const uint8_t VISIBLE_LINES = 3;
-          const uint8_t VISIBLE_HEIGHT = 30;
+          const uint8_t CONTENT_BOTTOM = 60;
+          const uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
+          const uint8_t MAX_LINE_WIDTH = 124;
 
-          // ============================================
-          // BORDER & TITLE
-          // ============================================
-          if (id(notification_show_border))
-            it.rectangle(0, 0, 128, 64);
+          const uint8_t LARGE_FONT_LINE_SPACING = 14;  // 11px font + 3px spacing
+          const uint8_t SMALL_FONT_LINE_SPACING = 10;  // 8px font + 2px spacing
 
-          it.printf(64, -2, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", id(notification_title).c_str());
+          const float SCROLL_SPEED_DOWN = 18.0f;
+          const float SCROLL_SPEED_UP = 80.0f;
+          const float PAUSE_AT_TOP = 2.0f;
+          const float PAUSE_AT_BOTTOM = 2.0f;
 
           // ============================================
-          // WORD WRAP
+          // SCROLL PHASES
           // ============================================
-          std::string msg = id(notification_message);
-          std::vector<std::string> lines;
-          std::string current_line = "";
-          std::string word = "";
-
-          for (size_t i = 0; i <= msg.length(); i++)
+          enum class ScrollPhase : uint8_t
           {
-            char c = (i < msg.length()) ? msg[i] : ' ';
+            PAUSED_AT_TOP = 0,
+            SCROLLING_DOWN = 1,
+            PAUSED_AT_BOTTOM = 2,
+            SCROLLING_UP = 3
+          };
 
-            if (c == ' ' || c == '\n' || c == '\t' || i == msg.length())
+          // ============================================
+          // STATE VARIABLES
+          // ============================================
+          static std::string cached_message = "";
+          static std::string cached_button = "";
+          static std::vector<std::string> wrapped_lines;
+
+          static float scroll_position = 0.0f;
+          static uint32_t last_update_time = 0;
+          static uint32_t phase_start_time = 0;
+          static ScrollPhase current_phase = ScrollPhase::PAUSED_AT_TOP;
+
+          static esphome::font::Font* selected_font = id(font6x12);
+          static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
+
+          std::string message = id(notification_message);
+          std::string button_text = id(notification_button_text);
+
+          uint8_t content_bottom = button_text.empty() ? CONTENT_BOTTOM : CONTENT_BOTTOM_WITH_BUTTON;
+          uint8_t available_height = content_bottom - TEXT_START_Y;
+
+          // Time calculation
+          uint32_t current_time = millis();
+          float delta_time = (last_update_time == 0) ? 0.016f : (float)(current_time - last_update_time) / 1000.0f;
+          last_update_time = current_time;
+
+          // ============================================
+          // Reset scroll state if we switched to notification page
+          // ============================================
+          if (id(notification_needs_scroll_reset))
+          {
+            wrapped_lines.clear();
+            scroll_position = 0.0f;
+            current_phase = ScrollPhase::PAUSED_AT_TOP;
+            phase_start_time = current_time;
+            cached_message = "";
+            cached_button = "";
+            id(notification_needs_scroll_reset) = false;
+          }
+
+          // ============================================
+          // TEXT WRAPPING & AUTOMATIC FONT SELECTION (big/small)
+          // ============================================
+          if (message != cached_message || button_text != cached_button)
+          {
+            cached_message = message;
+            cached_button = button_text;
+            wrapped_lines.clear();
+            scroll_position = 0.0f;
+            current_phase = ScrollPhase::PAUSED_AT_TOP;
+            phase_start_time = current_time;
+
+            // Try large font first, fall back to small if content didn't fit
+            for (uint8_t attempt = 0; attempt < 2; attempt++)
             {
-              if (!word.empty())
-              {
-                std::string test_line = current_line.empty() ? word : current_line + " " + word;
-                int x1, y1, w, h;
-                it.get_text_bounds(0, 0, test_line.c_str(), id(font6x12),
-                                  TextAlign::TOP_LEFT, &x1, &y1, &w, &h);
+              bool using_large_font = (attempt == 0);
+              wrapped_lines.clear();
 
-                if (w > MAX_WIDTH)
+              esphome::font::Font* test_font = using_large_font ? id(font7x13) : id(font6x12);
+              uint8_t test_line_spacing = using_large_font ? LARGE_FONT_LINE_SPACING : SMALL_FONT_LINE_SPACING;
+
+              // Word wrapping
+              std::string current_line = "";
+              std::string current_word = "";
+
+              for (size_t i = 0; i <= message.length(); i++)
+              {
+                char character = (i < message.length()) ? message[i] : ' ';
+
+                if (character == ' ' || character == '\n' || i == message.length())
                 {
-                  if (!current_line.empty())
+                  if (!current_word.empty())
                   {
-                    lines.push_back(current_line);
-                    current_line = word;
+                    std::string test_line = current_line.empty() ? current_word : current_line + " " + current_word;
+                    int bounds_x, bounds_y, text_width, text_height;
+                    it.get_text_bounds(0, 0, test_line.c_str(), test_font, TextAlign::TOP_LEFT, &bounds_x, &bounds_y, &text_width, &text_height);
+
+                    if (text_width > MAX_LINE_WIDTH)
+                    {
+                      if (!current_line.empty())
+                        wrapped_lines.push_back(current_line);
+
+                      current_line = current_word;
+                    }
+                    else
+                    {
+                      current_line = test_line;
+                    }
+                    current_word = "";
                   }
-                  else
+
+                  if (character == '\n' && !current_line.empty())
                   {
-                    lines.push_back(word);
+                    wrapped_lines.push_back(current_line);
                     current_line = "";
                   }
                 }
                 else
-                  current_line = test_line;
-
-                word = "";
+                {
+                  current_word += character;
+                }
               }
 
-              if (c == '\n' && !current_line.empty())
+              if (!current_line.empty())
+                wrapped_lines.push_back(current_line);
+
+              // Check if content fits
+              uint32_t total_height = wrapped_lines.size() * test_line_spacing;
+              if (!using_large_font || total_height <= available_height)
               {
-                lines.push_back(current_line);
-                current_line = "";
+                selected_font = test_font;
+                line_spacing = test_line_spacing;
+                break;
               }
             }
-            else
-              word += c;
           }
 
-          if (!current_line.empty())
-            lines.push_back(current_line);
+          // ============================================
+          // DRAW BORDER & TITLE
+          // ============================================
+          if (id(notification_show_border))
+            it.rectangle(0, 0, 128, 64);
+
+          it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", id(notification_title).c_str());
 
           // ============================================
-          // CONSTANT SPEED SCROLLING
+          // SCROLLING LOGIC
           // ============================================
-          static float scroll_offset = 0.0f;
-          static uint32_t phase_start_time = 0;
-          static int phase = 0;  // 0=pause_top, 1=scroll_down, 2=pause_bottom, 3=scroll_up
-          static std::string last_msg = "";
+          uint32_t total_height = wrapped_lines.size() * line_spacing;
+          int16_t vertical_offset = 0;
 
-          if (msg != last_msg) // Todo: proper reset if message is same
+          if (total_height <= available_height && wrapped_lines.size() <= 2)
           {
-            scroll_offset = 0.0f;
-            phase = 0;
-            phase_start_time = millis();
-            last_msg = msg;
+            // Special case for max 2 lines, slight offset to the top
+            vertical_offset = (available_height - total_height) / 2;
+            vertical_offset -= 4;
           }
-
-          if (lines.size() > VISIBLE_LINES)
+          else if (total_height <= available_height)
           {
-            const float max_scroll = (lines.size() * LINE_HEIGHT) - VISIBLE_HEIGHT;
-            const float elapsed = (millis() - phase_start_time) / 1000.0f;
-
-            switch (phase)
-            {
-              case 0:  // Pause at top
-                if (elapsed >= PAUSE_AT_TOP)
-                {
-                  phase = 1;
-                  phase_start_time = millis();
-                }
-                break;
-
-              case 1:  // Scroll down
-                scroll_offset += SCROLL_DOWN_SPEED * 0.03f;  // ~30ms per frame
-                if (scroll_offset >= max_scroll)
-                {
-                  scroll_offset = max_scroll;
-                  phase = 2;
-                  phase_start_time = millis();
-                }
-                break;
-
-              case 2:  // Pause at bottom
-                if (elapsed >= PAUSE_AT_BOTTOM)
-                {
-                  phase = 3;
-                  phase_start_time = millis();
-                }
-                break;
-
-              case 3:  // Scroll up
-                scroll_offset -= SCROLL_UP_SPEED * 0.03f;  // ~30ms per frame
-                if (scroll_offset <= 0.0f)
-                {
-                  scroll_offset = 0.0f;
-                  phase = 0;
-                  phase_start_time = millis();
-                }
-                break;
-            }
+            // Content fits - center it vertically
+            vertical_offset = (available_height - total_height) / 2;
           }
           else
-            scroll_offset = 0.0f;
-
-          // ============================================
-          // DRAW TEXT
-          // ============================================
-          for (size_t i = 0; i < lines.size(); i++)
           {
-            int y_pos = MESSAGE_Y_START + (i * LINE_HEIGHT) - (int)scroll_offset;
+            // Content needs scrolling
+            float max_scroll = total_height - available_height;
+            float time_in_phase = (current_time - phase_start_time) / 1000.0f;
 
-            if (y_pos >= MESSAGE_Y_START - LINE_HEIGHT && y_pos < MESSAGE_Y_START + VISIBLE_HEIGHT)
-              it.printf(64, y_pos, id(font6x12), TextAlign::TOP_CENTER, "%s", lines[i].c_str());
+            // State machine for scrolling
+            switch (current_phase)
+            {
+              case ScrollPhase::PAUSED_AT_TOP:
+                if (time_in_phase > PAUSE_AT_TOP)
+                {
+                  current_phase = ScrollPhase::SCROLLING_DOWN;
+                  phase_start_time = current_time;
+                }
+                break;
+
+              case ScrollPhase::SCROLLING_DOWN:
+                scroll_position += SCROLL_SPEED_DOWN * delta_time;
+                if (scroll_position >= max_scroll)
+                {
+                  scroll_position = max_scroll;
+                  current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
+                  phase_start_time = current_time;
+                }
+                break;
+
+              case ScrollPhase::PAUSED_AT_BOTTOM:
+                if (time_in_phase > PAUSE_AT_BOTTOM)
+                {
+                  current_phase = ScrollPhase::SCROLLING_UP;
+                  phase_start_time = current_time;
+                }
+                break;
+
+              case ScrollPhase::SCROLLING_UP:
+                scroll_position -= SCROLL_SPEED_UP * delta_time;
+                if (scroll_position <= 0.0f)
+                {
+                  scroll_position = 0.0f;
+                  current_phase = ScrollPhase::PAUSED_AT_TOP;
+                  phase_start_time = current_time;
+                }
+                break;
+
+              default:
+                break;
+            }
           }
 
           // ============================================
-          // BUTTON
+          // DRAW MESSAGE
           // ============================================
-          if (id(notification_button_text) != "")
+          it.start_clipping(0, TEXT_CLIP_TOP, 128, content_bottom);
+
+          for (size_t i = 0; i < wrapped_lines.size(); i++)
           {
-            const uint32_t button_height = 11;
-            const uint32_t button_padding = 10;  // Padding on each side of text
+            int16_t line_y = TEXT_START_Y + vertical_offset + (i * line_spacing) - scroll_position;
+            it.printf(64, line_y, selected_font, TextAlign::TOP_CENTER, "%s", wrapped_lines[i].c_str());
+          }
 
-            // Calculate button width based on text
-            int text_x1, text_y1, text_width, text_height;
-            it.get_text_bounds(0, 0, id(notification_button_text).c_str(), id(font7x13B),
-                              TextAlign::TOP_LEFT, &text_x1, &text_y1, &text_width, &text_height);
+          it.end_clipping();
 
-            const uint32_t button_width = text_width + (button_padding * 2);
+          // ============================================
+          // DRAW BUTTON
+          // ============================================
+          if (!button_text.empty())
+          {
+            int bounds_x, bounds_y, text_width, text_height;
+            it.get_text_bounds(0, 0, button_text.c_str(), id(font7x13B), TextAlign::TOP_LEFT, &bounds_x, &bounds_y, &text_width, &text_height);
 
-            // Draw button
-            it.filled_rectangle(64 - (button_width / 2), 51, button_width, button_height);
-            it.printf(64, 51, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "%s", id(notification_button_text).c_str());
+            uint8_t button_width = text_width + 9;
+            uint8_t button_x = 64 - (button_width / 2);
+
+            it.filled_rectangle(button_x, 51, button_width, 11);
+            it.printf(64, 50, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "%s", button_text.c_str());
           }
 
       # ============================================
@@ -3752,6 +3843,7 @@ binary_sensor:
               {
                 // Dismiss notification
                 id(return_to_current_dashboard).execute();
+                id(notification_message) = "";
 
                 return;
               }

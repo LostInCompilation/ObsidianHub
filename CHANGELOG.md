@@ -1,6 +1,6 @@
 # ObsidianHub Changelog
 
-## v1.1.2 (WIP)
+## v1.2.0
 
 ### New
 
