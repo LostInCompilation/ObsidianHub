@@ -242,7 +242,7 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 2min # todo
+    update_interval: 1min # todo
     device_class: "firmware"
     entity_category: "config"
     on_update_available:
@@ -943,8 +943,19 @@ script:
           id(is_menu_detail_visible) = false;
           id(is_menu_visible) = false;
 
+          // Reset status LED if on update available page
+          if (id(main_display).get_active_page() == id(page_update_available))
+          {
+            // Turn off turqoise blink effect
+            auto call = id(led_status).make_call();
+            call.set_effect("None");
+            call.perform();
+          }
+
+          // Show notification page
           id(main_display).show_page(id(page_notification));
           id(wake_display_and_reset_timer).execute();
+          id(restore_led_states).execute();
 
   # Update all graph durations and grid spacing
   - id: update_graph_durations
@@ -2155,7 +2166,7 @@ display:
 
           // Cubic bezier ease-in-out
           auto ease_in_out = [](float t) -> float {
-            const float x1 = 0.37f, y1 = 0.12f, x2 = 0.42f, y2 = 1.0f;
+            const float x1 = 0.39f, y1 = 0.15f, x2 = 0.45f, y2 = 1.0f;
 
             // Newton-Raphson to solve for t with given x
             float current_t = t;
@@ -3728,19 +3739,19 @@ text_sensor:
               return true;
             });
 
+            if (message.empty())
+            {
+              ESP_LOGW("notification", "Notification ignored - empty message");
+              return;
+            }
+
             // Show notification if we have a message and are not on certain pages
-            if (!message.empty()
-                && id(main_display).get_active_page() != id(page_update_available)
-                && id(main_display).get_active_page() != id(page_is_updating)
+            if (id(main_display).get_active_page() != id(page_is_updating)
                 && id(main_display).get_active_page() != id(page_wifi_ap_mode)
                 && id(main_display).get_active_page() != id(page_is_restarting)
                 && id(main_display).get_active_page() != id(page_graph_duration_restart_confirm))
             {
               id(show_notification)->execute(title, message, timeout, show_border, button_text);
-            }
-            else
-            {
-              ESP_LOGW("notification", "Notification ignored - empty message or currently showing update available page");
             }
 
 ###############################################################
@@ -3884,8 +3895,6 @@ binary_sensor:
               {
                 // Dismiss notification
                 id(return_to_current_dashboard).execute();
-                id(notification_message) = "";
-
                 return;
               }
               else if (id(is_menu_visible))
