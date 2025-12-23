@@ -2138,21 +2138,47 @@ display:
           // Configuration constants
           // ============================================
           const uint8_t TITLE_BOTTOM = 14;
-          const uint8_t TEXT_TOP_PADDING = 0;
           const uint8_t TEXT_CLIP_TOP = TITLE_BOTTOM + 3;
-          const uint8_t TEXT_START_Y = TITLE_BOTTOM + TEXT_TOP_PADDING;
+          const uint8_t TEXT_START_Y = TITLE_BOTTOM + 1;
 
-          const uint8_t CONTENT_BOTTOM = 60;
+          const uint8_t CONTENT_BOTTOM = 62;
           const uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
           const uint8_t MAX_LINE_WIDTH = 124;
 
           const uint8_t LARGE_FONT_LINE_SPACING = 14;  // 11px font + 3px spacing
           const uint8_t SMALL_FONT_LINE_SPACING = 10;  // 8px font + 2px spacing
 
-          const float SCROLL_SPEED_DOWN = 18.0f;
-          const float SCROLL_SPEED_UP = 80.0f;
-          const float PAUSE_AT_TOP = 2.0f;
-          const float PAUSE_AT_BOTTOM = 2.0f;
+          const float SCROLL_SPEED_DOWN = 8.0f;
+          const float SCROLL_SPEED_UP = 35.0f;
+          const float PAUSE_AT_TOP = 2.5f;
+          const float PAUSE_AT_BOTTOM = 2.5f;
+
+          // Cubic bezier ease-in-out
+          auto ease_in_out = [](float t) -> float {
+            const float x1 = 0.37f, y1 = 0.12f, x2 = 0.42f, y2 = 1.0f;
+
+            // Newton-Raphson to solve for t with given x
+            float current_t = t;
+            for (int i = 0; i < 4; i++) {
+              float current_x = 3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * x1 +
+                               3.0f * (1.0f - current_t) * current_t * current_t * x2 +
+                               current_t * current_t * current_t;
+
+              float current_slope = 3.0f * (1.0f - current_t) * (1.0f - current_t) * x1 +
+                                   6.0f * (1.0f - current_t) * current_t * (x2 - x1) +
+                                   3.0f * current_t * current_t * (1.0f - x2);
+
+              if (current_slope == 0.0f)
+                break;
+
+              current_t -= (current_x - t) / current_slope;
+            }
+
+            // Calculate y using the solved t
+            return 3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * y1 +
+                   3.0f * (1.0f - current_t) * current_t * current_t * y2 +
+                   current_t * current_t * current_t;
+          };
 
           // ============================================
           // SCROLL PHASES
@@ -2172,23 +2198,22 @@ display:
           static std::string cached_button = "";
           static std::vector<std::string> wrapped_lines;
 
+          std::string message = id(notification_message);
+          std::string button_text = id(notification_button_text);
+
           static float scroll_position = 0.0f;
           static uint32_t last_update_time = 0;
           static uint32_t phase_start_time = 0;
           static ScrollPhase current_phase = ScrollPhase::PAUSED_AT_TOP;
-
+          static float scroll_duration = 0.0f;
           static esphome::font::Font* selected_font = id(font6x12);
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
-
-          std::string message = id(notification_message);
-          std::string button_text = id(notification_button_text);
-
           uint8_t content_bottom = button_text.empty() ? CONTENT_BOTTOM : CONTENT_BOTTOM_WITH_BUTTON;
           uint8_t available_height = content_bottom - TEXT_START_Y;
 
           // Time calculation
           uint32_t current_time = millis();
-          float delta_time = (last_update_time == 0) ? 0.016f : (float)(current_time - last_update_time) / 1000.0f;
+          float delta_time = (last_update_time == 0) ? 0.025f : (float)(current_time - last_update_time) / 1000.0f;
           last_update_time = current_time;
 
           // ============================================
@@ -2200,6 +2225,7 @@ display:
             scroll_position = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = current_time;
+            scroll_duration = 0.0f;
             cached_message = "";
             cached_button = "";
             id(notification_needs_scroll_reset) = false;
@@ -2216,6 +2242,7 @@ display:
             scroll_position = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = current_time;
+            scroll_duration = 0.0f;
 
             // Try large font first, fall back to small if content didn't fit
             for (uint8_t attempt = 0; attempt < 2; attempt++)
@@ -2296,16 +2323,14 @@ display:
           uint32_t total_height = wrapped_lines.size() * line_spacing;
           int16_t vertical_offset = 0;
 
-          if (total_height <= available_height && wrapped_lines.size() <= 2)
-          {
-            // Special case for max 2 lines, slight offset to the top
-            vertical_offset = (available_height - total_height) / 2;
-            vertical_offset -= 4;
-          }
-          else if (total_height <= available_height)
+          if (total_height <= available_height)
           {
             // Content fits - center it vertically
             vertical_offset = (available_height - total_height) / 2;
+
+            // Special case for max 3 lines without button, slight offset to the top
+            if (button_text.empty() && wrapped_lines.size() <= 3)
+              vertical_offset -= 4;
           }
           else
           {
@@ -2313,7 +2338,7 @@ display:
             float max_scroll = total_height - available_height;
             float time_in_phase = (current_time - phase_start_time) / 1000.0f;
 
-            // State machine for scrolling
+            // State machine for scrolling with easing
             switch (current_phase)
             {
               case ScrollPhase::PAUSED_AT_TOP:
@@ -2321,16 +2346,24 @@ display:
                 {
                   current_phase = ScrollPhase::SCROLLING_DOWN;
                   phase_start_time = current_time;
+                  scroll_duration = max_scroll / SCROLL_SPEED_DOWN;
                 }
                 break;
 
               case ScrollPhase::SCROLLING_DOWN:
-                scroll_position += SCROLL_SPEED_DOWN * delta_time;
-                if (scroll_position >= max_scroll)
                 {
-                  scroll_position = max_scroll;
-                  current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
-                  phase_start_time = current_time;
+                  float progress = time_in_phase / scroll_duration;
+                  if (progress >= 1.0f)
+                  {
+                    scroll_position = max_scroll;
+                    current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
+                    phase_start_time = current_time;
+                  }
+                  else
+                  {
+                    float eased_progress = ease_in_out(progress);
+                    scroll_position = eased_progress * max_scroll;
+                  }
                 }
                 break;
 
@@ -2339,16 +2372,24 @@ display:
                 {
                   current_phase = ScrollPhase::SCROLLING_UP;
                   phase_start_time = current_time;
+                  scroll_duration = max_scroll / SCROLL_SPEED_UP;
                 }
                 break;
 
               case ScrollPhase::SCROLLING_UP:
-                scroll_position -= SCROLL_SPEED_UP * delta_time;
-                if (scroll_position <= 0.0f)
                 {
-                  scroll_position = 0.0f;
-                  current_phase = ScrollPhase::PAUSED_AT_TOP;
-                  phase_start_time = current_time;
+                  float progress = time_in_phase / scroll_duration;
+                  if (progress >= 1.0f)
+                  {
+                    scroll_position = 0.0f;
+                    current_phase = ScrollPhase::PAUSED_AT_TOP;
+                    phase_start_time = current_time;
+                  }
+                  else
+                  {
+                    float eased_progress = ease_in_out(progress);
+                    scroll_position = max_scroll * (1.0f - eased_progress);
+                  }
                 }
                 break;
 
@@ -2378,10 +2419,10 @@ display:
             int bounds_x, bounds_y, text_width, text_height;
             it.get_text_bounds(0, 0, button_text.c_str(), id(font7x13B), TextAlign::TOP_LEFT, &bounds_x, &bounds_y, &text_width, &text_height);
 
-            uint8_t button_width = text_width + 9;
+            uint8_t button_width = text_width + 11;
             uint8_t button_x = 64 - (button_width / 2);
 
-            it.filled_rectangle(button_x, 51, button_width, 11);
+            it.filled_rectangle(button_x - 1, 51, button_width, 11);
             it.printf(64, 50, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "%s", button_text.c_str());
           }
 
