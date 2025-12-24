@@ -261,6 +261,12 @@ wifi:
   enable_rrm: true
   id: wifi_component
 
+  # todo
+  manual_ip:
+    static_ip: 192.168.0.83
+    gateway: 192.168.0.1
+    subnet: 255.255.255.0
+
   on_connect:
     then:
       - lambda: |-
@@ -290,6 +296,7 @@ wifi:
   ap:
     ssid: "ObsidianHub-AP"
     password: "ObsidianHub2025"
+    ap_timeout: 60s
 
 # Captive Portal for WiFi Setup
 captive_portal:
@@ -2149,8 +2156,8 @@ display:
           // Configuration constants
           // ============================================
           const uint8_t TITLE_BOTTOM = 14;
-          const uint8_t TEXT_CLIP_TOP = TITLE_BOTTOM + 3;
-          const uint8_t TEXT_START_Y = TITLE_BOTTOM + 1;
+          const uint8_t TEXT_CLIP_TOP = TITLE_BOTTOM + 4;
+          const uint8_t TEXT_START_Y = TITLE_BOTTOM + 2;
 
           const uint8_t CONTENT_BOTTOM = 62;
           const uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
@@ -2159,14 +2166,14 @@ display:
           const uint8_t LARGE_FONT_LINE_SPACING = 14;  // 11px font + 3px spacing
           const uint8_t SMALL_FONT_LINE_SPACING = 10;  // 8px font + 2px spacing
 
-          const float SCROLL_SPEED_DOWN = 8.0f;
+          const float SCROLL_SPEED_DOWN = 9.0f;
           const float SCROLL_SPEED_UP = 35.0f;
           const float PAUSE_AT_TOP = 2.5f;
           const float PAUSE_AT_BOTTOM = 2.5f;
 
           // Cubic bezier ease-in-out
           auto ease_in_out = [](float t) -> float {
-            const float x1 = 0.39f, y1 = 0.15f, x2 = 0.45f, y2 = 1.0f;
+            const float x1 = 0.39f, y1 = 0.14f, x2 = 0.45f, y2 = 1.0f;
 
             // Newton-Raphson to solve for t with given x
             float current_t = t;
