@@ -5,7 +5,8 @@
 ### New
 
 - Update available notifications in HomeAssistant and MQTT with the ability to install firmware updates remotely from inside HomeAssistant
-- Display a custom notification on your ObsidianHub: Send the notification over MQTT to show it on the display. You can specify the title, message and a timeout for how long the notification should be displayed (0 = show until rotary encoder pressed, or show for n seconds). You can also choose to display a border and/or show a button at the bottom of the notification
+- Display a custom notification on your ObsidianHub: Send the notification over MQTT to show it on the display. You can specify the title, message, and a timeout for how many seconds the notification should be displayed (0 = show until rotary encoder pressed, or show for n seconds). You can also choose to display a border and/or show a button with custom text at the bottom of the notification. The notification message will automatically scroll if it is too long and a smaller font will be selected automatically.
+- Added automatic timezone detection
 
 **MQTT topic:**
 
@@ -16,8 +17,14 @@ obsidianhub/notification
 **Payload:**
 
 ```
-{"title": "Info", "message": "This is an information with auto scrolling if the message is long (like this one)", "timeout": 10, "show_border": true, "show_button": true}
+{"title": "Info", "message": "This is an information with auto scrolling if the message is long (like this one)", "timeout": 0, "show_border": true, "button_text": true}
 ```
+
+- `title`: The title of the notification. If left empty or missing, "Notification" will be used as the title
+- `message`: The message of the notificstion. Must be specified.
+- `timeout`: The time in seconds when to hide the notification again. Set to 0 to display it until rotary encoder is pressed.
+- `show_border`: Show a border around the notification.
+- `button_text`
 
 ### Fixes & Improvements
 
@@ -25,6 +32,7 @@ obsidianhub/notification
 - Renamed entities
 - Changed entity icons
 - Fixed auto dimming not working on certain pages
+- Improved IP location detection
 - Bug fixes
 
 ## v1.1.1
