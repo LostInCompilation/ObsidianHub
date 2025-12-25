@@ -24,7 +24,7 @@ obsidianhub/notification
 - `message`: The message of the notificstion. Must be specified.
 - `timeout`: The time in seconds when to hide the notification again. Set to 0 to display it until rotary encoder is pressed.
 - `show_border`: Show a border around the notification.
-- `button_text`
+- `button_text`: The text of the button. Leave empty to hide the button
 
 ### Fixes & Improvements
 
