@@ -20,7 +20,6 @@
 # Notification:
 # Check ignore interactions on notification page!
 # Auto font size (bigger font if short message)+
-# Scroll time based on num of lines
 # Cap off very long messages
 
 ###############################################################
@@ -46,7 +45,7 @@ substitutions:
 
   # ----------------------------------
   # Timezone
-  timezone: "Europe/Berlin"
+  fallback_timezone: "Europe/Berlin"
 
   # ----------------------------------
   # Weather
@@ -81,6 +80,20 @@ esphome:
   platformio_options:
     board_build.f_flash: 80000000L
     board_build.flash_mode: qio
+    # lib_deps:
+    #   - anonymousaga/TzDbLookup
+    # build_flags:
+    #   - '-I.piolibdeps/obsidianhub/TzDbLookup/src'
+    #   - '-I.piolibdeps/obsidianhub/TzDbLookup'
+  #libraries:
+  #  - anonymousaga/TzDbLookup
+  includes:
+  #  - <TzDbLookup.h>
+    - TzDbLookup/tz_data.h
+    - TzDbLookup/TzDbLookup.h
+    - TzDbLookup/TzDbLookup.cpp
+
+
   on_boot:
     priority: -100
     then:
@@ -123,7 +136,7 @@ logger:
 api:
   id: api_component
   encryption:
-    key: ${api_encryption_key}
+    key: "${api_encryption_key}"
 
   # Debug
   # on_client_connected:
@@ -330,7 +343,7 @@ time:
   - platform: sntp
     id: sntp_time
     update_interval: 6h
-    timezone: ${timezone}
+    timezone: "${fallback_timezone}"
     servers:
      - 0.pool.ntp.org
      - 1.pool.ntp.org
@@ -390,7 +403,7 @@ globals:
     initial_value: "false"
 
   # --- Display Brightness ---
-  - id: display_brightness
+  - id: display_brightness # todo remove, user number directly?
     type: float
     restore_value: yes
     initial_value: "1.0f"
@@ -407,7 +420,7 @@ globals:
     initial_value: "false"
 
   # --- Sleep/Wake Management ---
-  - id: sleep_timeout_milliseconds
+  - id: sleep_timeout_milliseconds # todo remove, user number directly?
     type: uint32_t
     restore_value: yes
     initial_value: "30000"
@@ -438,7 +451,7 @@ globals:
     initial_value: "false"
 
   # --- Graph Configuration ---
-  - id: graph_duration_minutes
+  - id: graph_duration_minutes # todo remove, user number directly?
     type: uint32_t
     restore_value: yes
     initial_value: "30"
@@ -1065,13 +1078,13 @@ script:
             call.perform();
           }
 
-  # Get location from IP
+  # Get location & timezone from IP
   - id: fetch_location
     then:
       - http_request.get:
-          url: "http://ip-api.com/json/?fields=lat,lon"
+          url: "https://ipinfo.io/json"
           capture_response: true
-          max_response_buffer_size: 64
+          max_response_buffer_size: 512
           request_headers:
             Content-Type: application/json
           on_response:
@@ -1084,17 +1097,55 @@ script:
                   }
 
                   json::parse_json(body, [](JsonObject root) -> bool {
-                    if (!root["lat"].is<float>() || !root["lon"].is<float>())
+                    // Get timezone
+                    if (root["timezone"].is<const char*>())
                     {
-                      ESP_LOGE("fetch_location", "Missing latitude/longitude in response");
+                      // Convert IANA to POSIX using TzDbLookup lib
+                      const char* posix_tz = TzDbLookup::getPosix(root["timezone"].as<const char*>());
+
+                      if (posix_tz != nullptr)
+                      {
+                        // Set system wide timezone
+                        setenv("TZ", posix_tz, 1);
+                        tzset();
+                      }
+                      else
+                      {
+                        ESP_LOGE("fetch_location", "Failed to convert timezone to POSIX");
+                      }
+                    }
+                    else
+                    {
+                      ESP_LOGE("fetch_location", "Missing timezone in response");
+                    }
+
+                    // Get location
+                    if (root["loc"].is<const char*>())
+                    {
+                      std::string loc = root["loc"].as<const char*>();
+                      const size_t comma_pos = loc.find(',');
+
+                      if (comma_pos == std::string::npos)
+                      {
+                        ESP_LOGE("fetch_location", "Invalid loc format");
+                        return false;
+                      }
+
+                      id(latitude) = std::stof(loc.substr(0, comma_pos));
+                      id(longitude) = std::stof(loc.substr(comma_pos + 1));
+                    }
+                    else
+                    {
+                      ESP_LOGE("fetch_location", "Missing loc in response");
                       return false;
                     }
 
-                    id(latitude) = root["lat"];
-                    id(longitude) = root["lon"];
                     id(location_fetched) = true;
 
-                    ESP_LOGI("fetch_location", "Location detected: %.4f, %.4f", id(latitude), id(longitude));
+                    ESP_LOGI("fetch_location", "Location detected: %.4f, %.4f, timezone: %s",
+                        id(latitude),
+                        id(longitude),
+                        root["timezone"].is<const char*>() ? root["timezone"].as<const char*>() : "");
 
                     return true;
                   });
@@ -1152,7 +1203,19 @@ interval:
           condition:
             lambda: "return !id(is_boot_complete);"
           then:
-            - animation.next_frame: animation_boot
+            - lambda: |-
+                static bool animation_done = false;
+
+                if (!animation_done)
+                {
+                  id(animation_boot).next_frame();
+
+                  ESP_LOGI("boot animation", "Current: %d, Count: %d", id(animation_boot).get_current_frame(), id(animation_boot).get_animation_frame_count());
+
+                  // Stop on last frame
+                  if (id(animation_boot).get_current_frame() >= id(animation_boot).get_animation_frame_count() - 1)
+                    animation_done = true;
+                }
 
   # Update spinner1 animation frames (time syncing)
   - interval: 12ms
@@ -1319,7 +1382,7 @@ interval:
   - interval: 75ms
     then:
       - lambda: |-
-          static const uint32_t BOOT_LOGO_HOLD_MS = 3900;
+          static const uint32_t BOOT_LOGO_HOLD_MS = 4800;
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.5f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
@@ -1592,7 +1655,7 @@ display:
       # ============================================
       - id: page_boot_logo
         lambda: |-
-          it.image(20, -7, id(animation_boot));
+          it.image(20, -6, id(animation_boot));
 
       # ============================================
       # RESTARTING PAGE
@@ -2163,40 +2226,58 @@ display:
           const uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
           const uint8_t MAX_LINE_WIDTH = 124;
 
-          const uint8_t LARGE_FONT_LINE_SPACING = 14;  // 11px font + 3px spacing
-          const uint8_t SMALL_FONT_LINE_SPACING = 10;  // 8px font + 2px spacing
+          const uint8_t LARGE_FONT_LINE_SPACING = 14;
+          const uint8_t SMALL_FONT_LINE_SPACING = 10;
 
-          const float SCROLL_SPEED_DOWN = 9.0f;
+          const float SCROLL_SPEED_DOWN = 12.0f;
           const float SCROLL_SPEED_UP = 35.0f;
+
+          const float EASE_TIME_DOWN = 1.2f;
+          const float EASE_TIME_UP   = 1.2f;
+
           const float PAUSE_AT_TOP = 2.5f;
           const float PAUSE_AT_BOTTOM = 2.5f;
 
           // Cubic bezier ease-in-out
           auto ease_in_out = [](float t) -> float {
-            const float x1 = 0.39f, y1 = 0.14f, x2 = 0.45f, y2 = 1.0f;
+            //const float x1 = 0.39f, y1 = 0.14f, x2 = 0.45f, y2 = 1.0f;
+            const float x1 = 0.37f, y1 = 0.12f, x2 = 0.40f, y2 = 1.0f;
 
-            // Newton-Raphson to solve for t with given x
             float current_t = t;
-            for (int i = 0; i < 4; i++) {
-              float current_x = 3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * x1 +
-                               3.0f * (1.0f - current_t) * current_t * current_t * x2 +
-                               current_t * current_t * current_t;
+            for (int i = 0; i < 4; i++)
+            {
+              float current_x =
+                3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * x1 +
+                3.0f * (1.0f - current_t) * current_t * current_t * x2 +
+                current_t * current_t * current_t;
 
-              float current_slope = 3.0f * (1.0f - current_t) * (1.0f - current_t) * x1 +
-                                   6.0f * (1.0f - current_t) * current_t * (x2 - x1) +
-                                   3.0f * current_t * current_t * (1.0f - x2);
+              float current_slope =
+                3.0f * (1.0f - current_t) * (1.0f - current_t) * x1 +
+                6.0f * (1.0f - current_t) * current_t * (x2 - x1) +
+                3.0f * current_t * current_t * (1.0f - x2);
 
               if (current_slope == 0.0f)
                 break;
 
               current_t -= (current_x - t) / current_slope;
             }
-
-            // Calculate y using the solved t
-            return 3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * y1 +
-                   3.0f * (1.0f - current_t) * current_t * current_t * y2 +
-                   current_t * current_t * current_t;
+            return
+              3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * y1 +
+              3.0f * (1.0f - current_t) * current_t * current_t * y2 +
+              current_t * current_t * current_t;
           };
+
+          auto ease_in = [&](float t) -> float {
+            return ease_in_out(t * 0.5f) * 2.0f;
+          };
+
+          auto ease_out = [&](float t) -> float {
+            return (ease_in_out(0.5f + t * 0.5f) - 0.5f) * 2.0f;
+          };
+
+          const float ease_in_scale = ease_in(1.0f);
+          const float ease_out_start = ease_out(0.0f);
+          const float ease_out_scale = 1.0f - ease_out_start;
 
           // ============================================
           // SCROLL PHASES
@@ -2220,22 +2301,19 @@ display:
           std::string button_text = id(notification_button_text);
 
           static float scroll_position = 0.0f;
-          static uint32_t last_update_time = 0;
+          static float phase_start_scroll = 0.0f;
           static uint32_t phase_start_time = 0;
           static ScrollPhase current_phase = ScrollPhase::PAUSED_AT_TOP;
-          static float scroll_duration = 0.0f;
           static esphome::font::Font* selected_font = id(font6x12);
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
+
           uint8_t content_bottom = button_text.empty() ? CONTENT_BOTTOM : CONTENT_BOTTOM_WITH_BUTTON;
           uint8_t available_height = content_bottom - TEXT_START_Y;
 
-          // Time calculation
           uint32_t current_time = millis();
-          float delta_time = (last_update_time == 0) ? 0.025f : (float)(current_time - last_update_time) / 1000.0f;
-          last_update_time = current_time;
 
           // ============================================
-          // Reset scroll state if we switched to notification page
+          // Reset scroll state
           // ============================================
           if (id(notification_needs_scroll_reset))
           {
@@ -2243,14 +2321,13 @@ display:
             scroll_position = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = current_time;
-            scroll_duration = 0.0f;
             cached_message = "";
             cached_button = "";
             id(notification_needs_scroll_reset) = false;
           }
 
           // ============================================
-          // TEXT WRAPPING & AUTOMATIC FONT SELECTION (big/small)
+          // TEXT WRAPPING & FONT SELECTION
           // ============================================
           if (message != cached_message || button_text != cached_button)
           {
@@ -2260,9 +2337,7 @@ display:
             scroll_position = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = current_time;
-            scroll_duration = 0.0f;
 
-            // Try large font first, fall back to small if content didn't fit
             for (uint8_t attempt = 0; attempt < 2; attempt++)
             {
               bool using_large_font = (attempt == 0);
@@ -2271,7 +2346,6 @@ display:
               esphome::font::Font* test_font = using_large_font ? id(font7x13) : id(font6x12);
               uint8_t test_line_spacing = using_large_font ? LARGE_FONT_LINE_SPACING : SMALL_FONT_LINE_SPACING;
 
-              // Word wrapping
               std::string current_line = "";
               std::string current_word = "";
 
@@ -2284,14 +2358,13 @@ display:
                   if (!current_word.empty())
                   {
                     std::string test_line = current_line.empty() ? current_word : current_line + " " + current_word;
-                    int bounds_x, bounds_y, text_width, text_height;
-                    it.get_text_bounds(0, 0, test_line.c_str(), test_font, TextAlign::TOP_LEFT, &bounds_x, &bounds_y, &text_width, &text_height);
+                    int bx, by, bw, bh;
+                    it.get_text_bounds(0, 0, test_line.c_str(), test_font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
 
-                    if (text_width > MAX_LINE_WIDTH)
+                    if (bw > MAX_LINE_WIDTH)
                     {
                       if (!current_line.empty())
                         wrapped_lines.push_back(current_line);
-
                       current_line = current_word;
                     }
                     else
@@ -2316,7 +2389,6 @@ display:
               if (!current_line.empty())
                 wrapped_lines.push_back(current_line);
 
-              // Check if content fits
               uint32_t total_height = wrapped_lines.size() * test_line_spacing;
               if (!using_large_font || total_height <= available_height)
               {
@@ -2333,7 +2405,8 @@ display:
           if (id(notification_show_border))
             it.rectangle(0, 0, 128, 64);
 
-          it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", id(notification_title).c_str());
+          it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER,
+                    "%s", id(notification_title).c_str());
 
           // ============================================
           // SCROLLING LOGIC
@@ -2343,20 +2416,15 @@ display:
 
           if (total_height <= available_height)
           {
-            // Content fits - center it vertically
             vertical_offset = (available_height - total_height) / 2;
-
-            // Special case for max 3 lines without button, slight offset to the top
             if (button_text.empty() && wrapped_lines.size() <= 3)
               vertical_offset -= 4;
           }
           else
           {
-            // Content needs scrolling
             float max_scroll = total_height - available_height;
             float time_in_phase = (current_time - phase_start_time) / 1000.0f;
 
-            // State machine for scrolling with easing
             switch (current_phase)
             {
               case ScrollPhase::PAUSED_AT_TOP:
@@ -2364,52 +2432,104 @@ display:
                 {
                   current_phase = ScrollPhase::SCROLLING_DOWN;
                   phase_start_time = current_time;
-                  scroll_duration = max_scroll / SCROLL_SPEED_DOWN;
+                  phase_start_scroll = scroll_position;
                 }
                 break;
 
               case ScrollPhase::SCROLLING_DOWN:
+              {
+                float ease_dist = 0.5f * SCROLL_SPEED_DOWN * EASE_TIME_DOWN;
+                float linear_dist = max_scroll - (2.0f * ease_dist);
+                if (linear_dist < 0.0f)
+                  linear_dist = 0.0f;
+
+                float linear_time = linear_dist / SCROLL_SPEED_DOWN;
+                float total_time = (2.0f * EASE_TIME_DOWN) + linear_time;
+
+                if (time_in_phase >= total_time)
                 {
-                  float progress = time_in_phase / scroll_duration;
-                  if (progress >= 1.0f)
-                  {
-                    scroll_position = max_scroll;
-                    current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
-                    phase_start_time = current_time;
-                  }
-                  else
-                  {
-                    float eased_progress = ease_in_out(progress);
-                    scroll_position = eased_progress * max_scroll;
-                  }
+                  scroll_position = phase_start_scroll + ease_dist + linear_dist + ease_dist;
+                  current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
+                  phase_start_time = current_time;
+                  phase_start_scroll = scroll_position;
                 }
-                break;
+                else if (time_in_phase < EASE_TIME_DOWN)
+                {
+                  float p = time_in_phase / EASE_TIME_DOWN;
+                  scroll_position =
+                    phase_start_scroll +
+                    (ease_in(p) / ease_in_scale) * ease_dist;
+                }
+                else if (time_in_phase < EASE_TIME_DOWN + linear_time)
+                {
+                  scroll_position =
+                    phase_start_scroll +
+                    ease_dist +
+                    (time_in_phase - EASE_TIME_DOWN) * SCROLL_SPEED_DOWN;
+                }
+                else
+                {
+                  float p = (time_in_phase - EASE_TIME_DOWN - linear_time) / EASE_TIME_DOWN;
+                  scroll_position =
+                    phase_start_scroll +
+                    ease_dist +
+                    linear_dist +
+                    ((ease_out(p) - ease_out_start) / ease_out_scale) * ease_dist;
+                }
+              }
+              break;
 
               case ScrollPhase::PAUSED_AT_BOTTOM:
                 if (time_in_phase > PAUSE_AT_BOTTOM)
                 {
                   current_phase = ScrollPhase::SCROLLING_UP;
                   phase_start_time = current_time;
-                  scroll_duration = max_scroll / SCROLL_SPEED_UP;
+                  phase_start_scroll = scroll_position;
                 }
                 break;
 
               case ScrollPhase::SCROLLING_UP:
+              {
+                float ease_dist = 0.5f * SCROLL_SPEED_UP * EASE_TIME_UP;
+                float linear_dist = max_scroll - (2.0f * ease_dist);
+                if (linear_dist < 0.0f)
+                  linear_dist = 0.0f;
+
+                float linear_time = linear_dist / SCROLL_SPEED_UP;
+                float total_time = (2.0f * EASE_TIME_UP) + linear_time;
+
+                if (time_in_phase >= total_time)
                 {
-                  float progress = time_in_phase / scroll_duration;
-                  if (progress >= 1.0f)
-                  {
-                    scroll_position = 0.0f;
-                    current_phase = ScrollPhase::PAUSED_AT_TOP;
-                    phase_start_time = current_time;
-                  }
-                  else
-                  {
-                    float eased_progress = ease_in_out(progress);
-                    scroll_position = max_scroll * (1.0f - eased_progress);
-                  }
+                  scroll_position = phase_start_scroll - (ease_dist + linear_dist + ease_dist);
+                  current_phase = ScrollPhase::PAUSED_AT_TOP;
+                  phase_start_time = current_time;
+                  phase_start_scroll = scroll_position;
                 }
-                break;
+                else if (time_in_phase < EASE_TIME_UP)
+                {
+                  float p = time_in_phase / EASE_TIME_UP;
+                  scroll_position =
+                    phase_start_scroll -
+                    (ease_in(p) / ease_in_scale) * ease_dist;
+                }
+                else if (time_in_phase < EASE_TIME_UP + linear_time)
+                {
+                  scroll_position =
+                    phase_start_scroll -
+                    (ease_dist +
+                    (time_in_phase - EASE_TIME_UP) * SCROLL_SPEED_UP);
+                }
+                else
+                {
+                  float p = (time_in_phase - EASE_TIME_UP - linear_time) / EASE_TIME_UP;
+                  scroll_position =
+                    phase_start_scroll -
+                    (ease_dist +
+                    linear_dist +
+                    ((ease_out(p) - ease_out_start) / ease_out_scale) * ease_dist);
+                }
+              }
+              break;
 
               default:
                 break;
@@ -2423,8 +2543,15 @@ display:
 
           for (size_t i = 0; i < wrapped_lines.size(); i++)
           {
-            int16_t line_y = TEXT_START_Y + vertical_offset + (i * line_spacing) - scroll_position;
-            it.printf(64, line_y, selected_font, TextAlign::TOP_CENTER, "%s", wrapped_lines[i].c_str());
+            int16_t line_y =
+              TEXT_START_Y +
+              vertical_offset +
+              (i * line_spacing) -
+              scroll_position;
+
+            it.printf(64, line_y, selected_font,
+                      TextAlign::TOP_CENTER,
+                      "%s", wrapped_lines[i].c_str());
           }
 
           it.end_clipping();
@@ -2434,14 +2561,20 @@ display:
           // ============================================
           if (!button_text.empty())
           {
-            int bounds_x, bounds_y, text_width, text_height;
-            it.get_text_bounds(0, 0, button_text.c_str(), id(font7x13B), TextAlign::TOP_LEFT, &bounds_x, &bounds_y, &text_width, &text_height);
+            int bx, by, bw, bh;
+            it.get_text_bounds(0, 0, button_text.c_str(),
+                              id(font7x13B),
+                              TextAlign::TOP_LEFT,
+                              &bx, &by, &bw, &bh);
 
-            uint8_t button_width = text_width + 11;
+            uint8_t button_width = bw + 11;
             uint8_t button_x = 64 - (button_width / 2);
 
             it.filled_rectangle(button_x - 1, 51, button_width, 11);
-            it.printf(64, 50, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "%s", button_text.c_str());
+            it.printf(64, 50, id(font7x13B),
+                      COLOR_OFF,
+                      TextAlign::TOP_CENTER,
+                      "%s", button_text.c_str());
           }
 
       # ============================================
@@ -3719,8 +3852,8 @@ text_sensor:
                 message = root["message"].as<const char*>();
 
               // Support timeout as int and string
-              if (root["timeout"].is<int32_t>())
-                timeout = max(root["timeout"].as<int32_t>(), 0l);
+              if (root["timeout"].is<uint32_t>())
+                timeout = max(root["timeout"].as<uint32_t>(), 0ul);
               else if (root["timeout"].is<const char*>())
                 timeout = max(atoi(root["timeout"].as<const char*>()), 0);
 
