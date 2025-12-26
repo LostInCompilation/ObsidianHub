@@ -6,6 +6,8 @@ fp-info-cache*
 PCB/ObsidianHub-backups
 
 Misc/
+UserManual/
 
 Software/ESPHome/Commands.txt
-User*Manual/
+Software/ESPHome/secrets.yaml
+Software/ESPHome/secrets_client_00pg.yaml
