@@ -255,7 +255,7 @@ update:
     name: "Firmware Update"
     id: update_firmware_component_http
     source: "${url_update_manifest}"
-    update_interval: 1min # todo
+    update_interval: 120min
     device_class: "firmware"
     entity_category: "config"
     on_update_available:
@@ -2216,32 +2216,29 @@ display:
       - id: page_notification
         lambda: |-
           // ============================================
-          // Configuration constants
+          // STATIC CONFIGURATION
           // ============================================
-          const uint8_t TITLE_BOTTOM = 14;
-          const uint8_t TEXT_CLIP_TOP = TITLE_BOTTOM + 4;
-          const uint8_t TEXT_START_Y = TITLE_BOTTOM + 2;
+          static constexpr uint8_t TITLE_BOTTOM = 14;
+          static constexpr uint8_t TEXT_START_Y = 16;
+          static constexpr uint8_t TEXT_CLIP_TOP = 18;
+          static constexpr uint8_t CONTENT_BOTTOM = 62;
+          static constexpr uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
+          static constexpr uint8_t MAX_LINE_WIDTH = 124;
+          static constexpr uint8_t LARGE_FONT_LINE_SPACING = 14;
+          static constexpr uint8_t SMALL_FONT_LINE_SPACING = 10;
+          static constexpr uint8_t BOTTOM_GAP = 5;  // Extra space below last line when scrolled to bottom
 
-          const uint8_t CONTENT_BOTTOM = 62;
-          const uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
-          const uint8_t MAX_LINE_WIDTH = 124;
+          static constexpr float SCROLL_SPEED_DOWN = 12.0f;
+          static constexpr float SCROLL_SPEED_UP = 35.0f;
+          static constexpr float EASE_TIME_DOWN = 1.2f;
+          static constexpr float EASE_TIME_UP = 1.2f;
+          static constexpr float PAUSE_AT_TOP = 2.5f;
+          static constexpr float PAUSE_AT_BOTTOM = 2.5f;
 
-          const uint8_t LARGE_FONT_LINE_SPACING = 14;
-          const uint8_t SMALL_FONT_LINE_SPACING = 10;
-
-          const float SCROLL_SPEED_DOWN = 12.0f;
-          const float SCROLL_SPEED_UP = 35.0f;
-
-          const float EASE_TIME_DOWN = 1.2f;
-          const float EASE_TIME_UP   = 1.2f;
-
-          const float PAUSE_AT_TOP = 2.5f;
-          const float PAUSE_AT_BOTTOM = 2.5f;
-
-          // Cubic bezier ease-in-out
-          auto ease_in_out = [](float t) -> float {
-            //const float x1 = 0.39f, y1 = 0.14f, x2 = 0.45f, y2 = 1.0f;
-            const float x1 = 0.37f, y1 = 0.12f, x2 = 0.40f, y2 = 1.0f;
+          // Cubic bezier easing functions (calculated once at startup)
+          static auto ease_in_out = [](float t) -> float
+          {
+            static constexpr float x1 = 0.37f, y1 = 0.12f, x2 = 0.40f, y2 = 1.0f;
 
             float current_t = t;
             for (int i = 0; i < 4; i++)
@@ -2261,23 +2258,27 @@ display:
 
               current_t -= (current_x - t) / current_slope;
             }
+
             return
               3.0f * (1.0f - current_t) * (1.0f - current_t) * current_t * y1 +
               3.0f * (1.0f - current_t) * current_t * current_t * y2 +
               current_t * current_t * current_t;
           };
 
-          auto ease_in = [&](float t) -> float {
+          static auto ease_in = [](float t) -> float
+          {
             return ease_in_out(t * 0.5f) * 2.0f;
           };
 
-          auto ease_out = [&](float t) -> float {
+          static auto ease_out = [](float t) -> float
+          {
             return (ease_in_out(0.5f + t * 0.5f) - 0.5f) * 2.0f;
           };
 
-          const float ease_in_scale = ease_in(1.0f);
-          const float ease_out_start = ease_out(0.0f);
-          const float ease_out_scale = 1.0f - ease_out_start;
+          // Pre-calculated normalization factors for easing functions
+          static const float ease_in_scale = ease_in(1.0f);
+          static const float ease_out_start = ease_out(0.0f);
+          static const float ease_out_scale = 1.0f - ease_out_start;
 
           // ============================================
           // SCROLL PHASES
@@ -2291,116 +2292,238 @@ display:
           };
 
           // ============================================
-          // STATE VARIABLES
+          // STATIC STATE
           // ============================================
-          static std::string cached_message = "";
-          static std::string cached_button = "";
-          static std::vector<std::string> wrapped_lines;
-
-          std::string message = id(notification_message);
-          std::string button_text = id(notification_button_text);
+          static std::string cached_message;
+          static std::string cached_button;
+          static std::vector<std::string> lines;
+          static esphome::font::Font* font = id(font6x12);
+          static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
 
           static float scroll_position = 0.0f;
           static float phase_start_scroll = 0.0f;
           static uint32_t phase_start_time = 0;
           static ScrollPhase current_phase = ScrollPhase::PAUSED_AT_TOP;
-          static esphome::font::Font* selected_font = id(font6x12);
-          static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
 
-          uint8_t content_bottom = button_text.empty() ? CONTENT_BOTTOM : CONTENT_BOTTOM_WITH_BUTTON;
-          uint8_t available_height = content_bottom - TEXT_START_Y;
-
-          uint32_t current_time = millis();
+          static uint16_t total_height = 0;
+          static float max_scroll = 0.0f;
 
           // ============================================
-          // Reset scroll state
+          // FRAME VARIABLES
+          // ============================================
+          uint32_t now = millis();
+          std::string message = id(notification_message);
+          std::string button = id(notification_button_text);
+          uint8_t content_bottom = button.empty() ? CONTENT_BOTTOM : CONTENT_BOTTOM_WITH_BUTTON;
+          uint8_t available_height = content_bottom - TEXT_START_Y;
+
+          // ============================================
+          // RESET OR RE-WRAP TEXT
           // ============================================
           if (id(notification_needs_scroll_reset))
           {
-            wrapped_lines.clear();
-            scroll_position = 0.0f;
-            current_phase = ScrollPhase::PAUSED_AT_TOP;
-            phase_start_time = current_time;
-            cached_message = "";
-            cached_button = "";
             id(notification_needs_scroll_reset) = false;
+            lines.clear();
+            scroll_position = 0.0f;
+            phase_start_scroll = 0.0f;
+            current_phase = ScrollPhase::PAUSED_AT_TOP;
+            phase_start_time = now;
+            cached_message.clear();
+            cached_button.clear();
           }
 
-          // ============================================
-          // TEXT WRAPPING & FONT SELECTION
-          // ============================================
-          if (message != cached_message || button_text != cached_button)
+          if (message != cached_message || button != cached_button)
           {
             cached_message = message;
-            cached_button = button_text;
-            wrapped_lines.clear();
+            cached_button = button;
             scroll_position = 0.0f;
+            phase_start_scroll = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
-            phase_start_time = current_time;
+            phase_start_time = now;
 
+            // Try large font first, fall back to small if text doesn't fit
             for (uint8_t attempt = 0; attempt < 2; attempt++)
             {
-              bool using_large_font = (attempt == 0);
-              wrapped_lines.clear();
+              bool use_large = (attempt == 0);
+              font = use_large ? id(font7x13) : id(font6x12);
+              line_spacing = use_large ? LARGE_FONT_LINE_SPACING : SMALL_FONT_LINE_SPACING;
+              lines.clear();
 
-              esphome::font::Font* test_font = using_large_font ? id(font7x13) : id(font6x12);
-              uint8_t test_line_spacing = using_large_font ? LARGE_FONT_LINE_SPACING : SMALL_FONT_LINE_SPACING;
-
-              std::string current_line = "";
-              std::string current_word = "";
-
+              // Word-wrap: break on spaces/newlines, but keep words intact
+              std::string line, word;
               for (size_t i = 0; i <= message.length(); i++)
               {
-                char character = (i < message.length()) ? message[i] : ' ';
+                char c = (i < message.length()) ? message[i] : ' ';
 
-                if (character == ' ' || character == '\n' || i == message.length())
+                if (c == ' ' || c == '\n' || i == message.length())
                 {
-                  if (!current_word.empty())
+                  if (!word.empty())
                   {
-                    std::string test_line = current_line.empty() ? current_word : current_line + " " + current_word;
+                    std::string test = line.empty() ? word : line + " " + word;
                     int bx, by, bw, bh;
-                    it.get_text_bounds(0, 0, test_line.c_str(), test_font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+                    it.get_text_bounds(0, 0, test.c_str(), font, TextAlign::TOP_LEFT,
+                                      &bx, &by, &bw, &bh);
 
-                    if (bw > MAX_LINE_WIDTH)
+                    if (bw > MAX_LINE_WIDTH && !line.empty())
                     {
-                      if (!current_line.empty())
-                        wrapped_lines.push_back(current_line);
-                      current_line = current_word;
+                      // Word doesn't fit, push current line and start new one
+                      lines.push_back(line);
+                      line = word;
                     }
                     else
                     {
-                      current_line = test_line;
+                      line = test;
                     }
-                    current_word = "";
+                    word.clear();
                   }
 
-                  if (character == '\n' && !current_line.empty())
+                  if (c == '\n' && !line.empty())
                   {
-                    wrapped_lines.push_back(current_line);
-                    current_line = "";
+                    lines.push_back(line);
+                    line.clear();
                   }
                 }
                 else
                 {
-                  current_word += character;
+                  word += c;
                 }
               }
 
-              if (!current_line.empty())
-                wrapped_lines.push_back(current_line);
+              if (!line.empty())
+                lines.push_back(line);
 
-              uint32_t total_height = wrapped_lines.size() * test_line_spacing;
-              if (!using_large_font || total_height <= available_height)
+              total_height = lines.size() * line_spacing;
+              if (!use_large || total_height <= available_height)
+                break;
+            }
+
+            // Calculate how far we need to scroll (scroll 5px past the end for a gap)
+            max_scroll = (total_height > available_height)
+                        ? (total_height - available_height + BOTTOM_GAP)
+                        : 0.0f;
+          }
+
+          // ============================================
+          // SCROLLING STATE MACHINE
+          // ============================================
+          int16_t vertical_offset = 0;
+
+          if (max_scroll > 0.0f)
+          {
+            uint32_t elapsed_millis = now - phase_start_time;
+            float time_in_phase = elapsed_millis / 1000.0f;
+
+            switch (current_phase)
+            {
+              case ScrollPhase::PAUSED_AT_TOP:
+                if (time_in_phase >= PAUSE_AT_TOP)
+                {
+                  current_phase = ScrollPhase::SCROLLING_DOWN;
+                  phase_start_time = now;
+                  phase_start_scroll = scroll_position;
+                }
+                break;
+
+              case ScrollPhase::SCROLLING_DOWN:
               {
-                selected_font = test_font;
-                line_spacing = test_line_spacing;
+                // Ideal case: ease for N px, scroll linearly, ease for N px
+                // Short scroll case: split max_scroll evenly between ease-in and ease-out
+                float ideal_ease = 0.5f * SCROLL_SPEED_DOWN * EASE_TIME_DOWN;
+                float ease_dist = (max_scroll < 2.0f * ideal_ease) ? (max_scroll * 0.5f) : ideal_ease;
+                float linear_dist = max_scroll - (2.0f * ease_dist);
+                if (linear_dist < 0.0f)
+                  linear_dist = 0.0f;
+
+                float ease_time = EASE_TIME_DOWN;
+                float linear_time = linear_dist / SCROLL_SPEED_DOWN;
+                float total_time = ease_time + linear_time + ease_time;
+
+                // Map time to position: [0..ease_time] ease-in, [ease_time..ease_time+linear] linear, [total-ease_time..total] ease-out
+                if (time_in_phase >= total_time)
+                {
+                  scroll_position = phase_start_scroll + max_scroll;
+                  current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
+                  phase_start_time = now;
+                  phase_start_scroll = scroll_position;
+                }
+                else if (time_in_phase < ease_time)
+                {
+                  float progress = time_in_phase / ease_time;
+                  scroll_position = phase_start_scroll + (ease_in(progress) / ease_in_scale) * ease_dist;
+                }
+                else if (time_in_phase < ease_time + linear_time)
+                {
+                  float linear_progress = time_in_phase - ease_time;
+                  scroll_position = phase_start_scroll + ease_dist + linear_progress * SCROLL_SPEED_DOWN;
+                }
+                else
+                {
+                  float progress = (time_in_phase - ease_time - linear_time) / ease_time;
+                  scroll_position = phase_start_scroll + ease_dist + linear_dist +
+                                  ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist;
+                }
+                break;
+              }
+
+              case ScrollPhase::PAUSED_AT_BOTTOM:
+                if (time_in_phase >= PAUSE_AT_BOTTOM)
+                {
+                  current_phase = ScrollPhase::SCROLLING_UP;
+                  phase_start_time = now;
+                  phase_start_scroll = scroll_position;
+                }
+                break;
+
+              case ScrollPhase::SCROLLING_UP:
+              {
+                // Same logic as scrolling down, but faster and moving backwards
+                float ideal_ease = 0.5f * SCROLL_SPEED_UP * EASE_TIME_UP;
+                float ease_dist = (max_scroll < 2.0f * ideal_ease) ? (max_scroll * 0.5f) : ideal_ease;
+                float linear_dist = max_scroll - (2.0f * ease_dist);
+                if (linear_dist < 0.0f)
+                  linear_dist = 0.0f;
+
+                float ease_time = EASE_TIME_UP;
+                float linear_time = linear_dist / SCROLL_SPEED_UP;
+                float total_time = ease_time + linear_time + ease_time;
+
+                if (time_in_phase >= total_time)
+                {
+                  scroll_position = phase_start_scroll - max_scroll;
+                  current_phase = ScrollPhase::PAUSED_AT_TOP;
+                  phase_start_time = now;
+                  phase_start_scroll = scroll_position;
+                }
+                else if (time_in_phase < ease_time)
+                {
+                  float progress = time_in_phase / ease_time;
+                  scroll_position = phase_start_scroll - (ease_in(progress) / ease_in_scale) * ease_dist;
+                }
+                else if (time_in_phase < ease_time + linear_time)
+                {
+                  float linear_progress = time_in_phase - ease_time;
+                  scroll_position = phase_start_scroll - ease_dist - linear_progress * SCROLL_SPEED_UP;
+                }
+                else
+                {
+                  float progress = (time_in_phase - ease_time - linear_time) / ease_time;
+                  scroll_position = phase_start_scroll - ease_dist - linear_dist -
+                                  ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist;
+                }
                 break;
               }
             }
           }
+          else
+          {
+            // Text fits without scrolling - center it vertically
+            vertical_offset = (available_height - total_height) / 2;
+            if (button.empty() && lines.size() <= 3)
+              vertical_offset -= 4;  // Nudge up slightly for better visual balance
+          }
 
           // ============================================
-          // DRAW BORDER & TITLE
+          // RENDER
           // ============================================
           if (id(notification_show_border))
             it.rectangle(0, 0, 128, 64);
@@ -2408,173 +2531,32 @@ display:
           it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER,
                     "%s", id(notification_title).c_str());
 
-          // ============================================
-          // SCROLLING LOGIC
-          // ============================================
-          uint32_t total_height = wrapped_lines.size() * line_spacing;
-          int16_t vertical_offset = 0;
-
-          if (total_height <= available_height)
-          {
-            vertical_offset = (available_height - total_height) / 2;
-            if (button_text.empty() && wrapped_lines.size() <= 3)
-              vertical_offset -= 4;
-          }
-          else
-          {
-            float max_scroll = total_height - available_height;
-            float time_in_phase = (current_time - phase_start_time) / 1000.0f;
-
-            switch (current_phase)
-            {
-              case ScrollPhase::PAUSED_AT_TOP:
-                if (time_in_phase > PAUSE_AT_TOP)
-                {
-                  current_phase = ScrollPhase::SCROLLING_DOWN;
-                  phase_start_time = current_time;
-                  phase_start_scroll = scroll_position;
-                }
-                break;
-
-              case ScrollPhase::SCROLLING_DOWN:
-              {
-                float ease_dist = 0.5f * SCROLL_SPEED_DOWN * EASE_TIME_DOWN;
-                float linear_dist = max_scroll - (2.0f * ease_dist);
-                if (linear_dist < 0.0f)
-                  linear_dist = 0.0f;
-
-                float linear_time = linear_dist / SCROLL_SPEED_DOWN;
-                float total_time = (2.0f * EASE_TIME_DOWN) + linear_time;
-
-                if (time_in_phase >= total_time)
-                {
-                  scroll_position = phase_start_scroll + ease_dist + linear_dist + ease_dist;
-                  current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
-                  phase_start_time = current_time;
-                  phase_start_scroll = scroll_position;
-                }
-                else if (time_in_phase < EASE_TIME_DOWN)
-                {
-                  float p = time_in_phase / EASE_TIME_DOWN;
-                  scroll_position =
-                    phase_start_scroll +
-                    (ease_in(p) / ease_in_scale) * ease_dist;
-                }
-                else if (time_in_phase < EASE_TIME_DOWN + linear_time)
-                {
-                  scroll_position =
-                    phase_start_scroll +
-                    ease_dist +
-                    (time_in_phase - EASE_TIME_DOWN) * SCROLL_SPEED_DOWN;
-                }
-                else
-                {
-                  float p = (time_in_phase - EASE_TIME_DOWN - linear_time) / EASE_TIME_DOWN;
-                  scroll_position =
-                    phase_start_scroll +
-                    ease_dist +
-                    linear_dist +
-                    ((ease_out(p) - ease_out_start) / ease_out_scale) * ease_dist;
-                }
-              }
-              break;
-
-              case ScrollPhase::PAUSED_AT_BOTTOM:
-                if (time_in_phase > PAUSE_AT_BOTTOM)
-                {
-                  current_phase = ScrollPhase::SCROLLING_UP;
-                  phase_start_time = current_time;
-                  phase_start_scroll = scroll_position;
-                }
-                break;
-
-              case ScrollPhase::SCROLLING_UP:
-              {
-                float ease_dist = 0.5f * SCROLL_SPEED_UP * EASE_TIME_UP;
-                float linear_dist = max_scroll - (2.0f * ease_dist);
-                if (linear_dist < 0.0f)
-                  linear_dist = 0.0f;
-
-                float linear_time = linear_dist / SCROLL_SPEED_UP;
-                float total_time = (2.0f * EASE_TIME_UP) + linear_time;
-
-                if (time_in_phase >= total_time)
-                {
-                  scroll_position = phase_start_scroll - (ease_dist + linear_dist + ease_dist);
-                  current_phase = ScrollPhase::PAUSED_AT_TOP;
-                  phase_start_time = current_time;
-                  phase_start_scroll = scroll_position;
-                }
-                else if (time_in_phase < EASE_TIME_UP)
-                {
-                  float p = time_in_phase / EASE_TIME_UP;
-                  scroll_position =
-                    phase_start_scroll -
-                    (ease_in(p) / ease_in_scale) * ease_dist;
-                }
-                else if (time_in_phase < EASE_TIME_UP + linear_time)
-                {
-                  scroll_position =
-                    phase_start_scroll -
-                    (ease_dist +
-                    (time_in_phase - EASE_TIME_UP) * SCROLL_SPEED_UP);
-                }
-                else
-                {
-                  float p = (time_in_phase - EASE_TIME_UP - linear_time) / EASE_TIME_UP;
-                  scroll_position =
-                    phase_start_scroll -
-                    (ease_dist +
-                    linear_dist +
-                    ((ease_out(p) - ease_out_start) / ease_out_scale) * ease_dist);
-                }
-              }
-              break;
-
-              default:
-                break;
-            }
-          }
-
-          // ============================================
-          // DRAW MESSAGE
-          // ============================================
           it.start_clipping(0, TEXT_CLIP_TOP, 128, content_bottom);
 
-          for (size_t i = 0; i < wrapped_lines.size(); i++)
+          for (size_t i = 0; i < lines.size(); i++)
           {
-            int16_t line_y =
-              TEXT_START_Y +
-              vertical_offset +
-              (i * line_spacing) -
-              scroll_position;
-
-            it.printf(64, line_y, selected_font,
-                      TextAlign::TOP_CENTER,
-                      "%s", wrapped_lines[i].c_str());
+            int16_t y = TEXT_START_Y + vertical_offset + (i * line_spacing) - scroll_position;
+            it.printf(64, y, font, TextAlign::TOP_CENTER, "%s", lines[i].c_str());
           }
 
           it.end_clipping();
 
-          // ============================================
-          // DRAW BUTTON
-          // ============================================
-          if (!button_text.empty())
+          if (!button.empty())
           {
             int bx, by, bw, bh;
-            it.get_text_bounds(0, 0, button_text.c_str(),
-                              id(font7x13B),
-                              TextAlign::TOP_LEFT,
-                              &bx, &by, &bw, &bh);
+            it.get_text_bounds(0, 0, button.c_str(), id(font7x13B),
+                              TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
 
-            uint8_t button_width = bw + 11;
+            // Use uint16_t to prevent overflow on very long button text
+            uint16_t button_width = bw + 11;
+            if (button_width > 126)
+              button_width = 126;
+
             uint8_t button_x = 64 - (button_width / 2);
 
             it.filled_rectangle(button_x - 1, 51, button_width, 11);
-            it.printf(64, 50, id(font7x13B),
-                      COLOR_OFF,
-                      TextAlign::TOP_CENTER,
-                      "%s", button_text.c_str());
+            it.printf(64, 50, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER,
+                      "%s", button.c_str());
           }
 
       # ============================================
