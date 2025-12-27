@@ -33,6 +33,7 @@ obsidianhub/notification
 - Changed entity icons
 - Fixed auto dimming not working on certain pages
 - Improved IP location detection
+- Fixed display flickering at power on
 - Bug fixes
 
 ## v1.1.1

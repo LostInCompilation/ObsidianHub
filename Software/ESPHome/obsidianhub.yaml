@@ -19,7 +19,7 @@
 
 # Notification:
 # Check ignore interactions on notification page!
-# Auto font size (bigger font if short message)+
+# Auto font size (bigger font if short message)
 # Cap off very long messages
 
 ###############################################################
@@ -31,33 +31,34 @@ substitutions:
   version: "1.1.1"
 
   # ----------------------------------
-  # Firmware Update URL
-  # Main
-  url_update_manifest: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/main/manifest.json"
-
-  # Client 00pg
-  #url_update_manifest: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/client_00pg/manifest.json"
+  # Custom build configuration for clients/users
+  client_00pg: false # Enable build for client_00pg
 
   # ----------------------------------
-  # Dashboards
-  num_dashboard_pages: 4
-  enable_system_monitor_dashboard: false
-
-  # ----------------------------------
-  # Timezone
+  # Fallback timezone
   fallback_timezone: "Europe/Berlin"
 
   # ----------------------------------
   # Weather
   fallback_latitude: "52.5174"   # Fallback location if it cant be automatically determined by IP
-  fallback_longitude: "13.3951"  # Defaults to Berlin/Germany
-  # API Key for OpenWeatherMap
-  openweathermap_api_key: !secret openweathermap_api_key
-
+  fallback_longitude: "13.3951"  # defaults to Berlin/Germany
+  openweathermap_api_key: !secret openweathermap_api_key # API Key for OpenWeatherMap
 
   # ----------------------------------
   # API Key for HomeAssistant
   api_encryption_key: "D+3rDqdndec4DruSWl6ljJ38cthDGbzFVii186YY66A="
+
+  # ----------------------------------
+  # Firmware Update URL
+  url_update_manifest_main: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/main/manifest.json"
+  url_update_manifest_client_00pg: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/update/client_00pg/manifest.json"
+
+  url_update_manifest: ${url_update_manifest_client_00pg if client_00pg else url_update_manifest_main}
+
+  # ----------------------------------
+  # Dashboards
+  num_dashboard_pages: 4
+  enable_system_monitor_dashboard: ${false if ${client_00pg} else true}
 
 ###############################################################
 # Dashboard Import for easy ESPHome Device Builder usage
@@ -80,25 +81,18 @@ esphome:
   platformio_options:
     board_build.f_flash: 80000000L
     board_build.flash_mode: qio
-    # lib_deps:
-    #   - anonymousaga/TzDbLookup
-    # build_flags:
-    #   - '-I.piolibdeps/obsidianhub/TzDbLookup/src'
-    #   - '-I.piolibdeps/obsidianhub/TzDbLookup'
-  #libraries:
-  #  - anonymousaga/TzDbLookup
   includes:
-  #  - <TzDbLookup.h>
     - TzDbLookup/tz_data.h
     - TzDbLookup/TzDbLookup.h
     - TzDbLookup/TzDbLookup.cpp
-
-
   on_boot:
     priority: -100
     then:
       - script.execute: restore_led_states
       - script.execute: update_graph_durations
+      - lambda: |-
+          id(main_display).set_contrast(0.0f);
+          id(main_display).update();
 
 esp32:
   variant: ESP32C3
@@ -119,6 +113,7 @@ preferences:
 # Logging
 ###############################################################
 logger:
+  id: component_logger
   level: INFO
   logs:
     wifi: WARN
@@ -134,7 +129,9 @@ logger:
 # MQTT only without native API).
 ###############################################################
 api:
-  id: api_component
+  id: component_api
+  batch_delay: 200ms
+  reboot_timeout: 0s
   encryption:
     key: "${api_encryption_key}"
 
@@ -164,12 +161,13 @@ api:
 # HTTP Requests
 ###############################################################
 http_request:
+  id: component_http_request
   follow_redirects: true
   redirect_limit: 3
   buffer_size_rx: 2048
   buffer_size_tx: 512
-  timeout: 4s
-  watchdog_timeout: 5s
+  timeout: 3s
+  watchdog_timeout: 4s
   useragent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
 ###############################################################
@@ -178,7 +176,7 @@ http_request:
 ota:
   # HTTP Updates (managed)
   - platform: http_request
-    id: ota_component_http
+    id: component_ota_http
     on_begin:
       then:
         - lambda: |-
@@ -214,7 +212,7 @@ ota:
 
   # ESPHome API
   - platform: esphome
-    id: ota_component
+    id: component_ota
     password: "ObsidianHubOTA2025"
     on_begin:
       then:
@@ -253,7 +251,7 @@ ota:
 update:
   - platform: http_request
     name: "Firmware Update"
-    id: update_firmware_component_http
+    id: component_update_firmware_http
     source: "${url_update_manifest}"
     update_interval: 120min
     device_class: "firmware"
@@ -266,13 +264,14 @@ update:
 # WiFi Configuration
 ###############################################################
 wifi:
+  # We use WiFi setup over captive portal, so no credentials needed
   #ssid: !secret wifi_ssid
   #password: !secret wifi_password
-  #fast_connect: true
-  #power_save_mode: none
+
+  power_save_mode: none # todo
   enable_btm: true
   enable_rrm: true
-  id: wifi_component
+  id: component_wifi
 
   # todo
   manual_ip:
@@ -325,6 +324,7 @@ mqtt:
   port: !secret mqtt_port
   username: !secret mqtt_user
   password: !secret mqtt_password
+
   log_topic: null
   keepalive: 10s
   publish_nan_as_none: true
@@ -1243,7 +1243,7 @@ interval:
     then:
       - if:
           condition:
-            update.is_available: update_firmware_component_http
+            update.is_available: component_update_firmware_http
           then:
             - script.execute: show_update_available
 
@@ -1266,7 +1266,7 @@ interval:
     then:
       - if:
           condition:
-            lambda: "return !id(location_fetched) && id(wifi_component).is_connected() && id(wifi_has_been_setup_by_user);"
+            lambda: "return !id(location_fetched) && id(component_wifi).is_connected() && id(wifi_has_been_setup_by_user);"
           then:
             - lambda: |-
                 const uint8_t MAX_RETRIES = 4;
@@ -1292,7 +1292,7 @@ interval:
     then:
       - if:
           condition:
-            lambda: "return id(wifi_component).is_connected() && id(wifi_has_been_setup_by_user);"
+            lambda: "return id(component_wifi).is_connected() && id(wifi_has_been_setup_by_user);"
           then:
             - script.execute: fetch_weather
 
@@ -1344,7 +1344,7 @@ interval:
           static uint32_t ap_mode_timer = 0;
           static bool leds_have_been_set = false;
 
-          if (!id(wifi_component).is_connected() && id(is_boot_complete) && id(wifi_has_been_setup_by_user))
+          if (!id(component_wifi).is_connected() && id(is_boot_complete) && id(wifi_has_been_setup_by_user))
           {
             ap_mode_timer++;
 
@@ -1755,7 +1755,7 @@ display:
           static uint32_t wifi_lost_time = 0;
 
           const uint32_t now = millis();
-          const bool wifi_connected = id(wifi_component).is_connected();
+          const bool wifi_connected = id(component_wifi).is_connected();
 
           // Check WiFi disconnect
           if (wifi_connected)
@@ -2218,7 +2218,6 @@ display:
           // ============================================
           // STATIC CONFIGURATION
           // ============================================
-          static constexpr uint8_t TITLE_BOTTOM = 14;
           static constexpr uint8_t TEXT_START_Y = 16;
           static constexpr uint8_t TEXT_CLIP_TOP = 18;
           static constexpr uint8_t CONTENT_BOTTOM = 62;
@@ -2226,7 +2225,7 @@ display:
           static constexpr uint8_t MAX_LINE_WIDTH = 124;
           static constexpr uint8_t LARGE_FONT_LINE_SPACING = 14;
           static constexpr uint8_t SMALL_FONT_LINE_SPACING = 10;
-          static constexpr uint8_t BOTTOM_GAP = 5;  // Extra space below last line when scrolled to bottom
+          static constexpr uint8_t BOTTOM_GAP = 5;
 
           static constexpr float SCROLL_SPEED_DOWN = 12.0f;
           static constexpr float SCROLL_SPEED_UP = 35.0f;
@@ -2869,11 +2868,11 @@ display:
 
           // WiFi status
           it.printf(1, 24, id(font7x13), TextAlign::TOP_LEFT, "WiFi:");
-          it.printf(127, 24, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(wifi_component).is_connected() ? "Connected" : "Disconnected");
+          it.printf(127, 24, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(component_wifi).is_connected() ? "Connected" : "Disconnected");
 
           // API status (Home Assistant)
           it.printf(1, 37, id(font7x13), TextAlign::TOP_LEFT, "HA:");
-          it.printf(127, 37, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(api_component).is_connected() ? "Connected" : "Disconnected");
+          it.printf(127, 37, id(font7x13B), TextAlign::TOP_RIGHT, "%s", id(component_api).is_connected() ? "Connected" : "Disconnected");
 
           // MQTT status
           it.printf(1, 50, id(font7x13), TextAlign::TOP_LEFT, "MQTT:");
@@ -2899,7 +2898,7 @@ display:
           it.image(4, 1, id(icon_wifi));
           it.printf(76, -3, id(font_ui_18_bold), TextAlign::TOP_CENTER, "WiFi Status");
 
-          if (id(wifi_component).is_connected())
+          if (id(component_wifi).is_connected())
           {
             // IP
             it.printf(1, 20, id(font6x12), TextAlign::TOP_LEFT, "IP:");
@@ -2909,7 +2908,7 @@ display:
 
             // SSID
             it.printf(1, 31, id(font6x12), TextAlign::TOP_LEFT, "SSID:");
-            it.printf(127, 31, id(font6x12), TextAlign::TOP_RIGHT, "%s", id(wifi_component).wifi_ssid().c_str());
+            it.printf(127, 31, id(font6x12), TextAlign::TOP_RIGHT, "%s", id(component_wifi).wifi_ssid().c_str());
 
             // Signal strength
             it.printf(1, 42, id(font6x12), TextAlign::TOP_LEFT, "Signal:");
@@ -3966,7 +3965,7 @@ binary_sensor:
                 if (id(update_available_page_selected_button) == 0)
                 {
                   // Install update now
-                  id(update_firmware_component_http).perform(true);
+                  id(component_update_firmware_http).perform(true);
                 }
                 else
                 {
