@@ -2,7 +2,7 @@
 #                                                             #
 #                         ObsidianHub                         #
 #                                                             #
-# (C)2025 Marc Schöndorf                                      #
+# (C)2026 Marc Schöndorf                                      #
 #                                                             #
 # Smart home dashboard with environmental sensors,            #
 # OLED display, RGB LEDs and rotary encoder.                  #
@@ -10,7 +10,8 @@
 ###############################################################
 
 # ToDo:
-# - Rising falling trends
+# - Do not lock up on ota update error. Show reboot button
+# - Rising/falling trends
 # - Timer
 # - Brightness sync on boot fix
 # - Graph range and grid
@@ -20,7 +21,6 @@
 # Notification:
 # Check ignore interactions on notification page!
 # Auto font size (bigger font if short message)
-# Cap off very long messages
 
 ###############################################################
 # Substitutions
@@ -270,10 +270,10 @@ wifi:
   #ssid: !secret wifi_ssid
   #password: !secret wifi_password
 
-  #power_save_mode: none
+  id: component_wifi
   enable_btm: true
   enable_rrm: true
-  id: component_wifi
+  #power_save_mode: none
 
   on_connect:
     then:
@@ -361,8 +361,13 @@ time:
 # Connected sensors: AHT20 (temp/humidity), BMP280 (pressure), BH1750 (light)
 ###############################################################
 i2c:
-  sda: GPIO9
-  scl: GPIO8
+  id: i2c_bus
+  sda:
+    number: GPIO9
+    ignore_strapping_warning: true
+  scl:
+    number: GPIO8
+    ignore_strapping_warning: true
   scan: false
   frequency: 400kHz
   timeout: 1ms
@@ -372,6 +377,7 @@ i2c:
 # Connected sensor: ENS160 (air quality)
 ###############################################################
 spi:
+  id: spi_bus
   clk_pin: GPIO4
   mosi_pin: GPIO0
   miso_pin: GPIO1
@@ -1206,8 +1212,6 @@ interval:
                 {
                   id(animation_boot).next_frame();
 
-                  ESP_LOGI("boot animation", "Current: %d, Count: %d", id(animation_boot).get_current_frame(), id(animation_boot).get_animation_frame_count());
-
                   // Stop on last frame
                   if (id(animation_boot).get_current_frame() >= id(animation_boot).get_animation_frame_count() - 1)
                     animation_done = true;
@@ -1235,7 +1239,7 @@ interval:
 
   # Reshow update available page if user pressed "Later"
   - interval: 120min
-    startup_delay: 60s
+    startup_delay: 10min
     then:
       - if:
           condition:
@@ -1244,7 +1248,7 @@ interval:
             - script.execute: show_update_available
 
   # Custom notification timeout
-  - interval: 250ms
+  - interval: 1s
     then:
       - if:
           condition:
@@ -2212,17 +2216,20 @@ display:
       - id: page_notification
         lambda: |-
           // ============================================
-          // STATIC CONFIGURATION
+          // Display Configuration
           // ============================================
           static constexpr uint8_t TEXT_START_Y = 16;
           static constexpr uint8_t TEXT_CLIP_TOP = 18;
           static constexpr uint8_t CONTENT_BOTTOM = 62;
           static constexpr uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
           static constexpr uint8_t MAX_LINE_WIDTH = 124;
+          static constexpr uint8_t MAX_LINES = 12;
+          static constexpr uint8_t MAX_LINE_LENGTH = 32;  // Array size only
           static constexpr uint8_t LARGE_FONT_LINE_SPACING = 14;
           static constexpr uint8_t SMALL_FONT_LINE_SPACING = 10;
           static constexpr uint8_t BOTTOM_GAP = 5;
 
+          // Scroll animation timing
           static constexpr float SCROLL_SPEED_DOWN = 12.0f;
           static constexpr float SCROLL_SPEED_UP = 35.0f;
           static constexpr float EASE_TIME_DOWN = 1.2f;
@@ -2230,7 +2237,9 @@ display:
           static constexpr float PAUSE_AT_TOP = 2.5f;
           static constexpr float PAUSE_AT_BOTTOM = 2.5f;
 
-          // Cubic bezier easing functions (calculated once at startup)
+          // ============================================
+          // Easing Functions for Smooth Scrolling
+          // ============================================
           static auto ease_in_out = [](float t) -> float
           {
             static constexpr float x1 = 0.37f, y1 = 0.12f, x2 = 0.40f, y2 = 1.0f;
@@ -2270,13 +2279,12 @@ display:
             return (ease_in_out(0.5f + t * 0.5f) - 0.5f) * 2.0f;
           };
 
-          // Pre-calculated normalization factors for easing functions
           static const float ease_in_scale = ease_in(1.0f);
           static const float ease_out_start = ease_out(0.0f);
           static const float ease_out_scale = 1.0f - ease_out_start;
 
           // ============================================
-          // SCROLL PHASES
+          // Scroll State Machine
           // ============================================
           enum class ScrollPhase : uint8_t
           {
@@ -2286,12 +2294,53 @@ display:
             SCROLLING_UP = 3
           };
 
+          static auto calculate_scroll_with_easing = [](float start_pos, float distance,
+                                                        float speed, float ease_time,
+                                                        float time_elapsed, int8_t direction,
+                                                        bool& is_complete) -> float
+          {
+            float ideal_ease = 0.5f * speed * ease_time;
+            float ease_dist = (distance < 2.0f * ideal_ease) ? (distance * 0.5f) : ideal_ease;
+            float linear_dist = distance - (2.0f * ease_dist);
+            if (linear_dist < 0.0f)
+              linear_dist = 0.0f;
+
+            float linear_time = linear_dist / speed;
+            float total_time = ease_time + linear_time + ease_time;
+
+            is_complete = (time_elapsed >= total_time);
+            if (is_complete)
+              return start_pos + direction * distance;
+
+            float position = start_pos;
+
+            if (time_elapsed < ease_time)
+            {
+              float progress = time_elapsed / ease_time;
+              position += direction * (ease_in(progress) / ease_in_scale) * ease_dist;
+            }
+            else if (time_elapsed < ease_time + linear_time)
+            {
+              float linear_progress = time_elapsed - ease_time;
+              position += direction * (ease_dist + linear_progress * speed);
+            }
+            else
+            {
+              float progress = (time_elapsed - ease_time - linear_time) / ease_time;
+              position += direction * (ease_dist + linear_dist +
+                                    ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist);
+            }
+
+            return position;
+          };
+
           // ============================================
-          // STATIC STATE
+          // Persistent State Variables
           // ============================================
-          static std::string cached_message;
-          static std::string cached_button;
-          static std::vector<std::string> lines;
+          static char cached_message[1024];
+          static char cached_button[64];
+          static char lines[MAX_LINES][MAX_LINE_LENGTH];
+          static uint8_t line_count = 0;
           static esphome::font::Font* font = id(font6x12);
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
 
@@ -2304,106 +2353,289 @@ display:
           static float max_scroll = 0.0f;
 
           // ============================================
-          // FRAME VARIABLES
+          // Get Current Frame Data
           // ============================================
           uint32_t now = millis();
-          std::string message = id(notification_message);
-          std::string button = id(notification_button_text);
-          uint8_t content_bottom = button.empty() ? CONTENT_BOTTOM : CONTENT_BOTTOM_WITH_BUTTON;
+          const char* message = id(notification_message).c_str();
+          const char* button = id(notification_button_text).c_str();
+          bool button_present = (button[0] != '\0');
+          uint8_t content_bottom = button_present ? CONTENT_BOTTOM_WITH_BUTTON : CONTENT_BOTTOM;
           uint8_t available_height = content_bottom - TEXT_START_Y;
 
           // ============================================
-          // RESET OR RE-WRAP TEXT
+          // Handle Manual Reset Request
           // ============================================
           if (id(notification_needs_scroll_reset))
           {
             id(notification_needs_scroll_reset) = false;
-            lines.clear();
+            line_count = 0;
             scroll_position = 0.0f;
             phase_start_scroll = 0.0f;
-            current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = now;
-            cached_message.clear();
-            cached_button.clear();
+            current_phase = ScrollPhase::PAUSED_AT_TOP;
+            cached_message[0] = '\0';
+            cached_button[0] = '\0';
           }
 
-          if (message != cached_message || button != cached_button)
+          // ============================================
+          // Detect Content Changes and Re-wrap Text
+          // ============================================
+          bool message_changed = (strcmp(message, cached_message) != 0);
+          bool button_changed = (strcmp(button, cached_button) != 0);
+
+          if (message_changed || button_changed)
           {
-            cached_message = message;
-            cached_button = button;
+            strncpy(cached_message, message, sizeof(cached_message) - 1);
+            cached_message[sizeof(cached_message) - 1] = '\0';
+            strncpy(cached_button, button, sizeof(cached_button) - 1);
+            cached_button[sizeof(cached_button) - 1] = '\0';
+
             scroll_position = 0.0f;
             phase_start_scroll = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = now;
 
-            // Try large font first, fall back to small if text doesn't fit
-            for (uint8_t attempt = 0; attempt < 2; attempt++)
+            // Try large font first, fall back to small if content doesn't fit
+            for (uint8_t attempt = 0; attempt <= 1; attempt++)
             {
               bool use_large = (attempt == 0);
               font = use_large ? id(font7x13) : id(font6x12);
               line_spacing = use_large ? LARGE_FONT_LINE_SPACING : SMALL_FONT_LINE_SPACING;
-              lines.clear();
+              line_count = 0;
 
-              // Word-wrap: break on spaces/newlines, but keep words intact
-              std::string line, word;
-              for (size_t i = 0; i <= message.length(); i++)
+              // ============================================
+              // Word-wrap Helper Functions
+              // ============================================
+              auto text_fits = [&](const char* text) -> bool
               {
-                char c = (i < message.length()) ? message[i] : ' ';
+                int bx, by, bw, bh;
+                it.get_text_bounds(0, 0, text, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+                return bw <= MAX_LINE_WIDTH;
+              };
 
-                if (c == ' ' || c == '\n' || i == message.length())
+              auto flush_line = [&](char* line_buffer, size_t len)
+              {
+                if (line_count < MAX_LINES)
                 {
-                  if (!word.empty())
-                  {
-                    std::string test = line.empty() ? word : line + " " + word;
-                    int bx, by, bw, bh;
-                    it.get_text_bounds(0, 0, test.c_str(), font, TextAlign::TOP_LEFT,
-                                      &bx, &by, &bw, &bh);
+                  line_buffer[len] = '\0';
+                  strncpy(lines[line_count], line_buffer, MAX_LINE_LENGTH - 1);
+                  lines[line_count][MAX_LINE_LENGTH - 1] = '\0';
+                  line_count++;
+                }
+              };
 
-                    if (bw > MAX_LINE_WIDTH && !line.empty())
-                    {
-                      // Word doesn't fit, push current line and start new one
-                      lines.push_back(line);
-                      line = word;
-                    }
-                    else
-                    {
-                      line = test;
-                    }
-                    word.clear();
-                  }
+              // ============================================
+              // Word-wrap the Message
+              // ============================================
+              char current_line[MAX_LINE_LENGTH];
+              size_t line_len = 0;
+              current_line[0] = '\0';
 
-                  if (c == '\n' && !line.empty())
-                  {
-                    lines.push_back(line);
-                    line.clear();
-                  }
+              const char* p = message;
+
+              while (*p != '\0' && line_count < MAX_LINES)
+              {
+                // Handle explicit newline
+                if (*p == '\n')
+                {
+                  flush_line(current_line, line_len);
+                  line_len = 0;
+                  current_line[0] = '\0';
+                  p++;
+                  continue;
+                }
+
+                // Extract token (word or space sequence)
+                const char* token_start = p;
+                const char* token_end = p;
+                bool is_space = (*p == ' ');
+
+                if (is_space)
+                {
+                  while (*token_end == ' ')
+                    token_end++;
                 }
                 else
                 {
-                  word += c;
+                  while (*token_end != '\0' && *token_end != ' ' && *token_end != '\n')
+                    token_end++;
+                }
+
+                size_t token_length = token_end - token_start;
+
+                // Try adding entire token to current line
+                size_t needed_len = line_len + token_length;
+
+                if (needed_len < MAX_LINE_LENGTH)
+                {
+                  char test[MAX_LINE_LENGTH];
+                  memcpy(test, current_line, line_len);
+                  memcpy(test + line_len, token_start, token_length);
+                  test[needed_len] = '\0';
+
+                  if (text_fits(test))
+                  {
+                    // Token fits completely
+                    memcpy(current_line, test, needed_len + 1);
+                    line_len = needed_len;
+                    p = token_end;
+                    continue;
+                  }
+                }
+
+                // Token doesn't fit completely
+
+                // For words: try wrapping to new line first (normal word wrap behavior)
+                /*if (!is_space && line_len > 0)
+                {
+                  flush_line(current_line, line_len);
+                  line_len = 0;
+                  current_line[0] = '\0';
+
+                  // Don't advance p - retry same token on fresh line
+                  continue;
+                }*/
+
+                // For words that would fit on a fresh line: wrap to new line first
+                if (!is_space && line_len > 0)
+                {
+                  // Check if word would fit on empty line
+                  if (token_length < MAX_LINE_LENGTH)
+                  {
+                    char test[MAX_LINE_LENGTH];
+                    memcpy(test, token_start, token_length);
+                    test[token_length] = '\0';
+
+                    if (text_fits(test))
+                    {
+                      // Word would fit on fresh line - wrap normally
+                      flush_line(current_line, line_len);
+                      line_len = 0;
+                      current_line[0] = '\0';
+                      continue; // Retry token on fresh line
+                    }
+                  }
+                  // Word is too long even for empty line - continue from current line
+                }
+
+                // Token still doesn't fit (long word on empty line, or spaces)
+                // Add character-by-character (splits long tokens)
+                while (p < token_end && line_count < MAX_LINES)
+                {
+                  // Check buffer space
+                  if (line_len >= MAX_LINE_LENGTH - 1)
+                  {
+                    flush_line(current_line, line_len);
+                    line_len = 0;
+                    current_line[0] = '\0';
+                  }
+
+                  // Try adding next character
+                  char test[MAX_LINE_LENGTH];
+                  memcpy(test, current_line, line_len);
+                  test[line_len] = *p;
+                  test[line_len + 1] = '\0';
+
+                  if (text_fits(test))
+                  {
+                    // Character fits
+                    current_line[line_len] = *p;
+                    line_len++;
+                    current_line[line_len] = '\0';
+                    p++;
+                  }
+                  else
+                  {
+                    // Character doesn't fit - wrap
+                    if (line_len > 0)
+                    {
+                      flush_line(current_line, line_len);
+                      line_len = 0;
+                      current_line[0] = '\0';
+                    }
+                    else
+                    {
+                      // Single character doesn't fit empty line - skip it
+                      p++;
+                    }
+                  }
                 }
               }
 
-              if (!line.empty())
-                lines.push_back(line);
+              // Flush remaining content
+              if (line_len > 0 && line_count < MAX_LINES)
+                flush_line(current_line, line_len);
 
-              total_height = lines.size() * line_spacing;
-              if (!use_large || total_height <= available_height)
+              // ============================================
+              // Add Ellipsis if We Hit Line Limit
+              // ============================================
+              if (line_count == MAX_LINES)
+              {
+                uint8_t last_idx = line_count - 1;
+                char* last_line = lines[last_idx];
+                size_t current_len = strlen(last_line);
+                char test[MAX_LINE_LENGTH];
+                int bx, by, bw, bh;
+
+                // Always try to add ellipsis when we hit max lines
+                // Start by removing characters until "..." fits
+                while (current_len > 0)
+                {
+                  // Check buffer space
+                  if (current_len + 4 > MAX_LINE_LENGTH)
+                  {
+                    current_len--;
+                    continue;
+                  }
+
+                  // Build test string with shortened text + "..."
+                  strncpy(test, last_line, current_len);
+                  test[current_len] = '\0';
+                  strcat(test, "...");
+
+                  // Check if it fits on screen
+                  it.get_text_bounds(0, 0, test, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+
+                  if (bw <= MAX_LINE_WIDTH)
+                  {
+                    strcpy(last_line, test);
+                    break;
+                  }
+
+                  current_len--;
+                }
+
+                // Fallback: just "..." if nothing fits
+                if (current_len == 0)
+                  strcpy(last_line, "...");
+              }
+
+              total_height = line_count * line_spacing;
+
+              // Use this font if content fits, otherwise try smaller
+              if (total_height <= available_height)
                 break;
             }
 
-            // Calculate how far we need to scroll (scroll 5px past the end for a gap)
             max_scroll = (total_height > available_height)
                         ? (total_height - available_height + BOTTOM_GAP)
                         : 0.0f;
           }
 
           // ============================================
-          // SCROLLING STATE MACHINE
+          // Update Scroll Animation
           // ============================================
           int16_t vertical_offset = 0;
 
-          if (max_scroll > 0.0f)
+          if (max_scroll <= 0.0f)
+          {
+            // No scrolling necessary
+            vertical_offset = (available_height - total_height) / 2;
+
+            if (!button_present && line_count <= 3)
+              vertical_offset = std::max(0, vertical_offset - 4);
+          }
+          else
           {
             uint32_t elapsed_millis = now - phase_start_time;
             float time_in_phase = elapsed_millis / 1000.0f;
@@ -2415,48 +2647,25 @@ display:
                 {
                   current_phase = ScrollPhase::SCROLLING_DOWN;
                   phase_start_time = now;
-                  phase_start_scroll = scroll_position;
+                  phase_start_scroll = 0.0f;
                 }
+                scroll_position = 0.0f;
                 break;
 
               case ScrollPhase::SCROLLING_DOWN:
               {
-                // Ideal case: ease for N px, scroll linearly, ease for N px
-                // Short scroll case: split max_scroll evenly between ease-in and ease-out
-                float ideal_ease = 0.5f * SCROLL_SPEED_DOWN * EASE_TIME_DOWN;
-                float ease_dist = (max_scroll < 2.0f * ideal_ease) ? (max_scroll * 0.5f) : ideal_ease;
-                float linear_dist = max_scroll - (2.0f * ease_dist);
-                if (linear_dist < 0.0f)
-                  linear_dist = 0.0f;
+                bool scroll_complete = false;
+                scroll_position = calculate_scroll_with_easing(
+                  phase_start_scroll, max_scroll, SCROLL_SPEED_DOWN,
+                  EASE_TIME_DOWN, time_in_phase, 1, scroll_complete);
 
-                float ease_time = EASE_TIME_DOWN;
-                float linear_time = linear_dist / SCROLL_SPEED_DOWN;
-                float total_time = ease_time + linear_time + ease_time;
-
-                // Map time to position: [0..ease_time] ease-in, [ease_time..ease_time+linear] linear, [total-ease_time..total] ease-out
-                if (time_in_phase >= total_time)
+                if (scroll_complete)
                 {
-                  scroll_position = phase_start_scroll + max_scroll;
                   current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
                   phase_start_time = now;
                   phase_start_scroll = scroll_position;
                 }
-                else if (time_in_phase < ease_time)
-                {
-                  float progress = time_in_phase / ease_time;
-                  scroll_position = phase_start_scroll + (ease_in(progress) / ease_in_scale) * ease_dist;
-                }
-                else if (time_in_phase < ease_time + linear_time)
-                {
-                  float linear_progress = time_in_phase - ease_time;
-                  scroll_position = phase_start_scroll + ease_dist + linear_progress * SCROLL_SPEED_DOWN;
-                }
-                else
-                {
-                  float progress = (time_in_phase - ease_time - linear_time) / ease_time;
-                  scroll_position = phase_start_scroll + ease_dist + linear_dist +
-                                  ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist;
-                }
+                scroll_position = std::max(0.0f, std::min(scroll_position, max_scroll));
                 break;
               }
 
@@ -2465,93 +2674,135 @@ display:
                 {
                   current_phase = ScrollPhase::SCROLLING_UP;
                   phase_start_time = now;
-                  phase_start_scroll = scroll_position;
+                  phase_start_scroll = max_scroll;
                 }
+                scroll_position = max_scroll;
                 break;
 
               case ScrollPhase::SCROLLING_UP:
               {
-                // Same logic as scrolling down, but faster and moving backwards
-                float ideal_ease = 0.5f * SCROLL_SPEED_UP * EASE_TIME_UP;
-                float ease_dist = (max_scroll < 2.0f * ideal_ease) ? (max_scroll * 0.5f) : ideal_ease;
-                float linear_dist = max_scroll - (2.0f * ease_dist);
-                if (linear_dist < 0.0f)
-                  linear_dist = 0.0f;
+                bool scroll_complete = false;
+                scroll_position = calculate_scroll_with_easing(
+                  phase_start_scroll, max_scroll, SCROLL_SPEED_UP,
+                  EASE_TIME_UP, time_in_phase, -1, scroll_complete);
 
-                float ease_time = EASE_TIME_UP;
-                float linear_time = linear_dist / SCROLL_SPEED_UP;
-                float total_time = ease_time + linear_time + ease_time;
-
-                if (time_in_phase >= total_time)
+                if (scroll_complete)
                 {
-                  scroll_position = phase_start_scroll - max_scroll;
                   current_phase = ScrollPhase::PAUSED_AT_TOP;
                   phase_start_time = now;
                   phase_start_scroll = scroll_position;
                 }
-                else if (time_in_phase < ease_time)
-                {
-                  float progress = time_in_phase / ease_time;
-                  scroll_position = phase_start_scroll - (ease_in(progress) / ease_in_scale) * ease_dist;
-                }
-                else if (time_in_phase < ease_time + linear_time)
-                {
-                  float linear_progress = time_in_phase - ease_time;
-                  scroll_position = phase_start_scroll - ease_dist - linear_progress * SCROLL_SPEED_UP;
-                }
-                else
-                {
-                  float progress = (time_in_phase - ease_time - linear_time) / ease_time;
-                  scroll_position = phase_start_scroll - ease_dist - linear_dist -
-                                  ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist;
-                }
+                scroll_position = std::max(0.0f, std::min(scroll_position, max_scroll));
                 break;
               }
             }
           }
-          else
-          {
-            // Text fits without scrolling - center it vertically
-            vertical_offset = (available_height - total_height) / 2;
-            if (button.empty() && lines.size() <= 3)
-              vertical_offset -= 4;  // Nudge up slightly for better visual balance
-          }
 
           // ============================================
-          // RENDER
+          // Render Notification
           // ============================================
+
+          // Border
           if (id(notification_show_border))
             it.rectangle(0, 0, 128, 64);
 
-          it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER,
-                    "%s", id(notification_title).c_str());
+          // ============================================
+          // Title with ellipsis if needed
+          char title_buffer[48];
+          const char* title = id(notification_title).c_str();
+          int bx, by, bw, bh;
+          it.get_text_bounds(0, 0, title, id(font_ui_15_bold), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
 
+          if (bw > 120)
+          {
+            size_t len = strlen(title);
+            size_t max_len = (sizeof(title_buffer) > 4) ? (sizeof(title_buffer) - 4) : 0;
+
+            if (len > max_len)
+              len = max_len;
+
+            while (len > 0)
+            {
+              strncpy(title_buffer, title, len);
+              title_buffer[len] = '\0';
+              strcat(title_buffer, "...");
+
+              it.get_text_bounds(0, 0, title_buffer, id(font_ui_15_bold), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+
+              if (bw <= 120)
+                break;
+
+              len--;
+            }
+
+            if (len == 0)
+              strcpy(title_buffer, "...");
+          }
+          else
+          {
+            strncpy(title_buffer, title, sizeof(title_buffer) - 1);
+            title_buffer[sizeof(title_buffer) - 1] = '\0';
+          }
+
+          it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", title_buffer);
+
+          // ============================================
+          // Message text
           it.start_clipping(0, TEXT_CLIP_TOP, 128, content_bottom);
 
-          for (size_t i = 0; i < lines.size(); i++)
+          for (uint8_t i = 0; i < line_count; i++)
           {
             int16_t y = TEXT_START_Y + vertical_offset + (i * line_spacing) - scroll_position;
-            it.printf(64, y, font, TextAlign::TOP_CENTER, "%s", lines[i].c_str());
+            it.printf(64, y, font, TextAlign::TOP_CENTER, "%s", lines[i]);
           }
 
           it.end_clipping();
 
-          if (!button.empty())
+          // ============================================
+          // Button with ellipsis if needed
+          if (button_present)
           {
-            int bx, by, bw, bh;
-            it.get_text_bounds(0, 0, button.c_str(), id(font7x13B),
-                              TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+            char button_buffer[48];
+            it.get_text_bounds(0, 0, button, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
 
-            // Use uint16_t to prevent overflow on very long button text
-            uint16_t button_width = bw + 11;
-            if (button_width > 126)
-              button_width = 126;
+            if (bw > 115)
+            {
+              size_t len = strlen(button);
+              size_t max_len = (sizeof(button_buffer) > 4) ? (sizeof(button_buffer) - 4) : 0;
 
+              if (len > max_len)
+                len = max_len;
+
+              while (len > 0)
+              {
+                strncpy(button_buffer, button, len);
+                button_buffer[len] = '\0';
+                strcat(button_buffer, "...");
+
+                it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+
+                if (bw <= 115)
+                  break;
+
+                len--;
+              }
+
+              if (len == 0)
+                strcpy(button_buffer, "...");
+
+              it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+            }
+            else
+            {
+              strncpy(button_buffer, button, sizeof(button_buffer) - 1);
+              button_buffer[sizeof(button_buffer) - 1] = '\0';
+            }
+
+            uint16_t button_width = std::min((uint16_t)(bw + 11), (uint16_t)126);
             uint8_t button_x = 64 - (button_width / 2);
 
             it.filled_rectangle(button_x - 1, 51, button_width, 11);
-            it.printf(64, 50, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER,
-                      "%s", button.c_str());
+            it.printf(64, 50, id(font7x13B), COLOR_OFF, TextAlign::TOP_CENTER, "%s", button_buffer);
           }
 
       # ============================================
@@ -3463,7 +3714,9 @@ sensor:
 
   # ENS160: Air quality sensor (eCO2, TVOC, AQI)
   - platform: ens160_spi
-    cs_pin: GPIO2
+    cs_pin:
+      number: GPIO2
+      ignore_strapping_warning: true
     data_rate: 200kHz
     update_interval: 10s
     eco2:
