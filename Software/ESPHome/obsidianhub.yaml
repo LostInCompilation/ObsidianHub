@@ -2224,8 +2224,8 @@ display:
           static constexpr uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
           static constexpr uint8_t MAX_LINE_WIDTH = 124;
           static constexpr uint8_t MAX_LINES = 12;
-          static constexpr uint8_t MAX_LINE_LENGTH = 32;  // Array size only
-          static constexpr uint8_t LARGE_FONT_LINE_SPACING = 14;
+          static constexpr uint8_t LINE_BUFFER_SIZE = 32;
+          static constexpr uint8_t LARGE_FONT_LINE_SPACING = 12;
           static constexpr uint8_t SMALL_FONT_LINE_SPACING = 10;
           static constexpr uint8_t BOTTOM_GAP = 5;
 
@@ -2339,7 +2339,7 @@ display:
           // ============================================
           static char cached_message[1024];
           static char cached_button[64];
-          static char lines[MAX_LINES][MAX_LINE_LENGTH];
+          static char lines[MAX_LINES][LINE_BUFFER_SIZE];
           static uint8_t line_count = 0;
           static esphome::font::Font* font = id(font6x12);
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
@@ -2418,8 +2418,8 @@ display:
                 if (line_count < MAX_LINES)
                 {
                   line_buffer[len] = '\0';
-                  strncpy(lines[line_count], line_buffer, MAX_LINE_LENGTH - 1);
-                  lines[line_count][MAX_LINE_LENGTH - 1] = '\0';
+                  strncpy(lines[line_count], line_buffer, LINE_BUFFER_SIZE - 1);
+                  lines[line_count][LINE_BUFFER_SIZE - 1] = '\0';
                   line_count++;
                 }
               };
@@ -2427,7 +2427,7 @@ display:
               // ============================================
               // Word-wrap the Message
               // ============================================
-              char current_line[MAX_LINE_LENGTH];
+              char current_line[LINE_BUFFER_SIZE];
               size_t line_len = 0;
               current_line[0] = '\0';
 
@@ -2462,13 +2462,12 @@ display:
                 }
 
                 size_t token_length = token_end - token_start;
-
-                // Try adding entire token to current line
                 size_t needed_len = line_len + token_length;
 
-                if (needed_len < MAX_LINE_LENGTH)
+                // Try adding entire token to current line
+                if (needed_len < LINE_BUFFER_SIZE)
                 {
-                  char test[MAX_LINE_LENGTH];
+                  char test[LINE_BUFFER_SIZE];
                   memcpy(test, current_line, line_len);
                   memcpy(test + line_len, token_start, token_length);
                   test[needed_len] = '\0';
@@ -2485,30 +2484,32 @@ display:
 
                 // Token doesn't fit completely
 
-                // For words: try wrapping to new line first (normal word wrap behavior)
-                /*if (!is_space && line_len > 0)
+                // Single space that doesn't fit at end of line - just skip it
+                if (is_space && token_length == 1)
                 {
-                  flush_line(current_line, line_len);
-                  line_len = 0;
-                  current_line[0] = '\0';
-
-                  // Don't advance p - retry same token on fresh line
+                  p = token_end;
                   continue;
-                }*/
+                }
 
                 // For words that would fit on a fresh line: wrap to new line first
                 if (!is_space && line_len > 0)
                 {
                   // Check if word would fit on empty line
-                  if (token_length < MAX_LINE_LENGTH)
+                  if (token_length < LINE_BUFFER_SIZE)
                   {
-                    char test[MAX_LINE_LENGTH];
+                    char test[LINE_BUFFER_SIZE];
                     memcpy(test, token_start, token_length);
                     test[token_length] = '\0';
 
                     if (text_fits(test))
                     {
                       // Word would fit on fresh line - wrap normally
+                      // Remove trailing space from current line if present (for centered rendering)
+                      if (current_line[line_len - 1] == ' ')
+                      {
+                        line_len--;
+                      }
+
                       flush_line(current_line, line_len);
                       line_len = 0;
                       current_line[0] = '\0';
@@ -2523,7 +2524,7 @@ display:
                 while (p < token_end && line_count < MAX_LINES)
                 {
                   // Check buffer space
-                  if (line_len >= MAX_LINE_LENGTH - 1)
+                  if (line_len >= LINE_BUFFER_SIZE - 1)
                   {
                     flush_line(current_line, line_len);
                     line_len = 0;
@@ -2531,7 +2532,7 @@ display:
                   }
 
                   // Try adding next character
-                  char test[MAX_LINE_LENGTH];
+                  char test[LINE_BUFFER_SIZE];
                   memcpy(test, current_line, line_len);
                   test[line_len] = *p;
                   test[line_len + 1] = '\0';
@@ -2574,7 +2575,7 @@ display:
                 uint8_t last_idx = line_count - 1;
                 char* last_line = lines[last_idx];
                 size_t current_len = strlen(last_line);
-                char test[MAX_LINE_LENGTH];
+                char test[LINE_BUFFER_SIZE];
                 int bx, by, bw, bh;
 
                 // Always try to add ellipsis when we hit max lines
@@ -2582,7 +2583,7 @@ display:
                 while (current_len > 0)
                 {
                   // Check buffer space
-                  if (current_len + 4 > MAX_LINE_LENGTH)
+                  if (current_len + 4 > LINE_BUFFER_SIZE)
                   {
                     current_len--;
                     continue;
@@ -2637,9 +2638,11 @@ display:
           }
           else
           {
+            // Do scrolling
             uint32_t elapsed_millis = now - phase_start_time;
             float time_in_phase = elapsed_millis / 1000.0f;
 
+            // Scrolling state machine
             switch (current_phase)
             {
               case ScrollPhase::PAUSED_AT_TOP:
