@@ -2223,7 +2223,7 @@ display:
           // ============================================
           static constexpr uint8_t TEXT_START_Y = 16;
           static constexpr uint8_t TEXT_CLIP_TOP = 18;
-          static constexpr uint8_t CONTENT_BOTTOM = 62;
+          static constexpr uint8_t CONTENT_BOTTOM = 64;
           static constexpr uint8_t CONTENT_BOTTOM_WITH_BUTTON = 48;
           static constexpr uint8_t MAX_LINE_WIDTH = 124;
           static constexpr uint8_t MAX_LINES = 12;
@@ -2283,16 +2283,75 @@ display:
           };
 
           // ============================================
-          // Scroll State Machine
+          // Text Fitting Helper
           // ============================================
-          enum class ScrollPhase : uint8_t
+          static auto text_fits = [&](const char* text, esphome::font::Font* font, uint16_t max_width) -> bool
           {
-            PAUSED_AT_TOP = 0,
-            SCROLLING_DOWN = 1,
-            PAUSED_AT_BOTTOM = 2,
-            SCROLLING_UP = 3
+            int bx, by, bw, bh;
+            it.get_text_bounds(0, 0, text, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+            return (bw <= max_width);
           };
 
+          // ============================================
+          // Ellipsis Helper
+          // ============================================
+          static auto add_ellipsis_if_needed = [](const char* input, char* output, size_t output_buffer_size,
+                                                    esphome::font::Font* font, uint16_t max_width,
+                                                    bool force_ellipsis = false) -> void
+          {
+            // Check if output buffer has space for appending "..."
+            if (output_buffer_size < 4)
+            {
+              if (output_buffer_size > 0)
+                output[0] = '\0';
+
+              return;
+            }
+
+            // Check if text fits (unless forced to add ellipsis)
+            if (!force_ellipsis && text_fits(input, font, max_width))
+            {
+              strncpy(output, input, output_buffer_size - 1);
+              output[output_buffer_size - 1] = '\0';
+
+              return;
+            }
+
+            // Text doesn't fit, add ellipsis
+            size_t input_len = strlen(input);
+            size_t len = input_len;
+            char   test[LINE_BUFFER_SIZE];
+
+            // Remove last char one by one until ellipsis fits
+            while (len > 0)
+            {
+              // Check if we have space in buffers for shortened text + "..."
+              if (len + 4 > sizeof(test) || len + 4 > output_buffer_size)
+              {
+                len--;
+                continue;
+              }
+
+              memcpy(test, input, len);
+              test[len] = '\0';
+              strcat(test, "...");
+
+              if (text_fits(test, font, max_width))
+              {
+                memcpy(output, test, len + 4);
+                return;
+              }
+
+              len--;
+            }
+
+            // Fallback: just output "..."
+            strcpy(output, "...");
+          };
+
+          // ============================================
+          // Scroll Position Calculation
+          // ============================================
           static auto calculate_scroll_with_easing = [](float start_pos, float distance,
                                                         float speed, float ease_time,
                                                         float time_elapsed, int8_t direction,
@@ -2337,6 +2396,15 @@ display:
             return std::clamp(position, 0.0f, distance);
           };
 
+          // Scroll State Machine
+          enum class ScrollPhase : uint8_t
+          {
+            PAUSED_AT_TOP = 0,
+            SCROLLING_DOWN = 1,
+            PAUSED_AT_BOTTOM = 2,
+            SCROLLING_UP = 3
+          };
+
           // ============================================
           // Persistent State Variables
           // ============================================
@@ -2357,11 +2425,14 @@ display:
           // ============================================
           // Get Current Frame Data
           // ============================================
-          uint32_t now = millis();
           const char* message = id(notification_message).c_str();
           const char* button = id(notification_button_text).c_str();
+          uint32_t now = millis();
           bool button_present = (button[0] != '\0');
-          uint8_t content_bottom = button_present ? CONTENT_BOTTOM_WITH_BUTTON : CONTENT_BOTTOM;
+          uint8_t content_bottom = button_present ?
+                                    (CONTENT_BOTTOM_WITH_BUTTON) :
+                                    (id(notification_show_border) ? // More spacing if frame is visible
+                                      CONTENT_BOTTOM - 3 : CONTENT_BOTTOM);
           uint8_t available_height = content_bottom - TEXT_START_Y;
 
           // ============================================
@@ -2406,14 +2477,6 @@ display:
               // ============================================
               // Word-Wrap Helper Functions
               // ============================================
-              static auto text_fits = [&](const char* text) -> bool
-              {
-                int bx, by, bw, bh;
-                it.get_text_bounds(0, 0, text, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-
-                return (bw <= MAX_LINE_WIDTH);
-              };
-
               static auto flush_line = [&](char* line_buffer, size_t len) -> void
               {
                 if (line_count < MAX_LINES)
@@ -2444,6 +2507,7 @@ display:
               current_line[0] = '\0';
 
               const char* p = message;
+              bool  message_truncated = false;
 
               while (*p != '\0' && line_count < MAX_LINES)
               {
@@ -2484,7 +2548,7 @@ display:
                   memcpy(test + line_len, token_start, token_len);
                   test[needed_len] = '\0';
 
-                  if (text_fits(test))
+                  if (text_fits(test, font, MAX_LINE_WIDTH))
                   {
                     // Token fits completely, add it to current line
                     memcpy(current_line + line_len, token_start, token_len);
@@ -2517,7 +2581,7 @@ display:
                     memcpy(test, token_start, token_len);
                     test[token_len] = '\0';
 
-                    if (text_fits(test))
+                    if (text_fits(test, font, MAX_LINE_WIDTH))
                     {
                       // Remove trailing space (word separator at line break)
                       if (current_line[line_len - 1] == ' ')
@@ -2553,7 +2617,7 @@ display:
                   test[line_len] = *p;
                   test[line_len + 1] = '\0';
 
-                  if (text_fits(test))
+                  if (text_fits(test, font, MAX_LINE_WIDTH))
                   {
                     // Character fits
                     current_line[line_len] = *p;
@@ -2583,49 +2647,17 @@ display:
               if (line_len > 0 && line_count < MAX_LINES)
                 flush_line(current_line, line_len);
 
+              // Check if message has been truncated
+              if (line_count == MAX_LINES && *p != '\0')
+                message_truncated = true;
+
               // ============================================
-              // Add Ellipsis If We Hit Line Limit
+              // Add Ellipsis If Message Was Truncated
               // ============================================
-              // TODO: Ellipsis will be added always when max lines, even if text doesnt continue. Fix it
-              if (line_count == MAX_LINES)
+              if (message_truncated && line_count > 0)
               {
                 uint8_t last_idx = line_count - 1;
-                char* last_line = lines[last_idx];
-                size_t current_len = strlen(last_line);
-                char test[LINE_BUFFER_SIZE];
-                int bx, by, bw, bh;
-
-                // Always try to add ellipsis when we hit max lines
-                // Start by removing characters until "..." fits
-                while (current_len > 0)
-                {
-                  // Check buffer space
-                  if (current_len + 4 > LINE_BUFFER_SIZE)
-                  {
-                    current_len--;
-                    continue;
-                  }
-
-                  // Build test string with shortened text + "..."
-                  strncpy(test, last_line, current_len);
-                  test[current_len] = '\0';
-                  strcat(test, "...");
-
-                  // Check if it fits on screen
-                  it.get_text_bounds(0, 0, test, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-
-                  if (bw <= MAX_LINE_WIDTH)
-                  {
-                    strcpy(last_line, test);
-                    break;
-                  }
-
-                  current_len--;
-                }
-
-                // Fallback: just "..." if nothing fits
-                if (current_len == 0)
-                  strcpy(last_line, "...");
+                add_ellipsis_if_needed(lines[last_idx], lines[last_idx], LINE_BUFFER_SIZE, font, MAX_LINE_WIDTH, true);
               }
 
               total_height = line_count * line_spacing;
@@ -2729,41 +2761,9 @@ display:
 
           // ============================================
           // Title with ellipsis if needed
-          char title_buffer[48];
+          char title_buffer[LINE_BUFFER_SIZE];
           const char* title = id(notification_title).c_str();
-          int bx, by, bw, bh;
-          it.get_text_bounds(0, 0, title, id(font_ui_15_bold), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-
-          if (bw > 120)
-          {
-            size_t len = strlen(title);
-            size_t max_len = (sizeof(title_buffer) > 4) ? (sizeof(title_buffer) - 4) : 0;
-
-            if (len > max_len)
-              len = max_len;
-
-            while (len > 0)
-            {
-              strncpy(title_buffer, title, len);
-              title_buffer[len] = '\0';
-              strcat(title_buffer, "...");
-
-              it.get_text_bounds(0, 0, title_buffer, id(font_ui_15_bold), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-
-              if (bw <= 120)
-                break;
-
-              len--;
-            }
-
-            if (len == 0)
-              strcpy(title_buffer, "...");
-          }
-          else
-          {
-            strncpy(title_buffer, title, sizeof(title_buffer) - 1);
-            title_buffer[sizeof(title_buffer) - 1] = '\0';
-          }
+          add_ellipsis_if_needed(title, title_buffer, sizeof(title_buffer), id(font_ui_15_bold), 120);
 
           it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", title_buffer);
 
@@ -2783,42 +2783,11 @@ display:
           // Button with ellipsis if needed
           if (button_present)
           {
-            char button_buffer[48];
-            it.get_text_bounds(0, 0, button, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+            char button_buffer[LINE_BUFFER_SIZE];
+            add_ellipsis_if_needed(button, button_buffer, sizeof(button_buffer), id(font7x13B), 115);
 
-            if (bw > 115)
-            {
-              size_t len = strlen(button);
-              size_t max_len = (sizeof(button_buffer) > 4) ? (sizeof(button_buffer) - 4) : 0;
-
-              if (len > max_len)
-                len = max_len;
-
-              while (len > 0)
-              {
-                strncpy(button_buffer, button, len);
-                button_buffer[len] = '\0';
-                strcat(button_buffer, "...");
-
-                it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-
-                if (bw <= 115)
-                  break;
-
-                len--;
-              }
-
-              if (len == 0)
-                strcpy(button_buffer, "...");
-
-              it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-            }
-            else
-            {
-              strncpy(button_buffer, button, sizeof(button_buffer) - 1);
-              button_buffer[sizeof(button_buffer) - 1] = '\0';
-            }
-
+            int bx, by, bw, bh;
+            it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
             uint16_t button_width = std::min((uint16_t)(bw + 11), (uint16_t)126);
             uint8_t button_x = 64 - (button_width / 2);
 
@@ -4089,11 +4058,11 @@ text_sensor:
     on_value:
       then:
         - lambda: |-
-            std::string title = "Notification";
+            std::string title = "INFO";
             std::string message = "";
-            std::string button_text = "OK";
+            std::string button_text = "";
             uint32_t timeout = 0;
-            bool show_border = true;
+            bool show_border = false;
 
             json::parse_json(x, [&](JsonObject root) -> bool {
               if (root["title"].is<const char*>())
