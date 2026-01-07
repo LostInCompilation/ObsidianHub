@@ -10,6 +10,9 @@
 ###############################################################
 
 # ToDo:
+#
+# - BUG: scrolling easin in to linear speed has sudden accelaration jump
+#
 # - Do not lock up on ota update error. Show reboot button
 # - Rising/falling trends
 # - Timer
@@ -2216,7 +2219,7 @@ display:
       - id: page_notification
         lambda: |-
           // ============================================
-          // Display Configuration
+          // Configuration
           // ============================================
           static constexpr uint8_t TEXT_START_Y = 16;
           static constexpr uint8_t TEXT_CLIP_TOP = 18;
@@ -2279,10 +2282,6 @@ display:
             return (ease_in_out(0.5f + t * 0.5f) - 0.5f) * 2.0f;
           };
 
-          static const float ease_in_scale = ease_in(1.0f);
-          static const float ease_out_start = ease_out(0.0f);
-          static const float ease_out_scale = 1.0f - ease_out_start;
-
           // ============================================
           // Scroll State Machine
           // ============================================
@@ -2299,6 +2298,10 @@ display:
                                                         float time_elapsed, int8_t direction,
                                                         bool& is_complete) -> float
           {
+            static const float ease_in_scale = ease_in(1.0f);
+            static const float ease_out_start = ease_out(0.0f);
+            static const float ease_out_scale = 1.0f - ease_out_start;
+
             float ideal_ease = 0.5f * speed * ease_time;
             float ease_dist = (distance < 2.0f * ideal_ease) ? (distance * 0.5f) : ideal_ease;
             float linear_dist = distance - (2.0f * ease_dist);
@@ -2310,7 +2313,7 @@ display:
 
             is_complete = (time_elapsed >= total_time);
             if (is_complete)
-              return start_pos + direction * distance;
+              return std::clamp(start_pos + direction * distance, 0.0f, distance);
 
             float position = start_pos;
 
@@ -2331,7 +2334,7 @@ display:
                                     ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist);
             }
 
-            return position;
+            return std::clamp(position, 0.0f, distance);
           };
 
           // ============================================
@@ -2345,7 +2348,6 @@ display:
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
 
           static float scroll_position = 0.0f;
-          static float phase_start_scroll = 0.0f;
           static uint32_t phase_start_time = 0;
           static ScrollPhase current_phase = ScrollPhase::PAUSED_AT_TOP;
 
@@ -2370,7 +2372,6 @@ display:
             id(notification_needs_scroll_reset) = false;
             line_count = 0;
             scroll_position = 0.0f;
-            phase_start_scroll = 0.0f;
             phase_start_time = now;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             cached_message[0] = '\0';
@@ -2391,7 +2392,6 @@ display:
             cached_button[sizeof(cached_button) - 1] = '\0';
 
             scroll_position = 0.0f;
-            phase_start_scroll = 0.0f;
             current_phase = ScrollPhase::PAUSED_AT_TOP;
             phase_start_time = now;
 
@@ -2404,16 +2404,17 @@ display:
               line_count = 0;
 
               // ============================================
-              // Word-wrap Helper Functions
+              // Word-Wrap Helper Functions
               // ============================================
-              auto text_fits = [&](const char* text) -> bool
+              static auto text_fits = [&](const char* text) -> bool
               {
                 int bx, by, bw, bh;
                 it.get_text_bounds(0, 0, text, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-                return bw <= MAX_LINE_WIDTH;
+
+                return (bw <= MAX_LINE_WIDTH);
               };
 
-              auto flush_line = [&](char* line_buffer, size_t len)
+              static auto flush_line = [&](char* line_buffer, size_t len) -> void
               {
                 if (line_count < MAX_LINES)
                 {
@@ -2424,8 +2425,19 @@ display:
                 }
               };
 
+              static auto line_has_only_spaces = [](const char* line, size_t len) -> bool
+              {
+                for (size_t i = 0; i < len; i++)
+                {
+                  if (line[i] != ' ')
+                    return false;
+                }
+
+                return true;
+              };
+
               // ============================================
-              // Word-wrap the Message
+              // Word-Wrapping Loop
               // ============================================
               char current_line[LINE_BUFFER_SIZE];
               size_t line_len = 0;
@@ -2435,7 +2447,7 @@ display:
 
               while (*p != '\0' && line_count < MAX_LINES)
               {
-                // Handle explicit newline
+                // === Handle newlines ===
                 if (*p == '\n')
                 {
                   flush_line(current_line, line_len);
@@ -2445,7 +2457,7 @@ display:
                   continue;
                 }
 
-                // Extract token (word or space sequence)
+                // === Extract next token (word or consecutive spaces) ===
                 const char* token_start = p;
                 const char* token_end = p;
                 bool is_space = (*p == ' ');
@@ -2461,69 +2473,73 @@ display:
                     token_end++;
                 }
 
-                size_t token_length = token_end - token_start;
-                size_t needed_len = line_len + token_length;
+                size_t token_len = token_end - token_start;
+                size_t needed_len = line_len + token_len;
 
-                // Try adding entire token to current line
+                // === Try adding token to current line ===
                 if (needed_len < LINE_BUFFER_SIZE)
                 {
                   char test[LINE_BUFFER_SIZE];
                   memcpy(test, current_line, line_len);
-                  memcpy(test + line_len, token_start, token_length);
+                  memcpy(test + line_len, token_start, token_len);
                   test[needed_len] = '\0';
 
                   if (text_fits(test))
                   {
-                    // Token fits completely
-                    memcpy(current_line, test, needed_len + 1);
-                    line_len = needed_len;
+                    // Token fits completely, add it to current line
+                    memcpy(current_line + line_len, token_start, token_len);
+                    line_len += token_len;
+                    current_line[line_len] = '\0';
                     p = token_end;
+
                     continue;
                   }
                 }
 
-                // Token doesn't fit completely
+                // === Token doesn't fit on current line ===
 
                 // Single space that doesn't fit at end of line - just skip it
-                if (is_space && token_length == 1)
+                if (is_space && token_len == 1)
                 {
                   p = token_end;
                   continue;
                 }
 
-                // For words that would fit on a fresh line: wrap to new line first
-                if (!is_space && line_len > 0)
+                // === Check if word should wrap to fresh line ===
+                // Wrap word only if:
+                // 1. Current line has actual content (not just spaces)
+                // 2. Word would fit on an empty line by itself
+                if (!is_space && line_len > 0 && !line_has_only_spaces(current_line, line_len))
                 {
-                  // Check if word would fit on empty line
-                  if (token_length < LINE_BUFFER_SIZE)
+                  if (token_len < LINE_BUFFER_SIZE)
                   {
                     char test[LINE_BUFFER_SIZE];
-                    memcpy(test, token_start, token_length);
-                    test[token_length] = '\0';
+                    memcpy(test, token_start, token_len);
+                    test[token_len] = '\0';
 
                     if (text_fits(test))
                     {
-                      // Word would fit on fresh line - wrap normally
-                      // Remove trailing space from current line if present (for centered rendering)
+                      // Remove trailing space (word separator at line break)
                       if (current_line[line_len - 1] == ' ')
-                      {
                         line_len--;
-                      }
 
                       flush_line(current_line, line_len);
-                      line_len = 0;
-                      current_line[0] = '\0';
-                      continue; // Retry token on fresh line
+
+                      // Add word directly to new line
+                      memcpy(current_line, token_start, token_len);
+                      line_len = token_len;
+                      current_line[line_len] = '\0';
+                      p = token_end;
+
+                      continue;
                     }
                   }
-                  // Word is too long even for empty line - continue from current line
                 }
 
-                // Token still doesn't fit (long word on empty line, or spaces)
-                // Add character-by-character (splits long tokens)
+                // === Token still doesn't fit (long word on empty line, or spaces) ===
+                // Split token character-by-character
                 while (p < token_end && line_count < MAX_LINES)
                 {
-                  // Check buffer space
                   if (line_len >= LINE_BUFFER_SIZE - 1)
                   {
                     flush_line(current_line, line_len);
@@ -2563,13 +2579,14 @@ display:
                 }
               }
 
-              // Flush remaining content
+              // === Save any remaining content ===
               if (line_len > 0 && line_count < MAX_LINES)
                 flush_line(current_line, line_len);
 
               // ============================================
-              // Add Ellipsis if We Hit Line Limit
+              // Add Ellipsis If We Hit Line Limit
               // ============================================
+              // TODO: Ellipsis will be added always when max lines, even if text doesnt continue. Fix it
               if (line_count == MAX_LINES)
               {
                 uint8_t last_idx = line_count - 1;
@@ -2633,7 +2650,7 @@ display:
             // No scrolling necessary
             vertical_offset = (available_height - total_height) / 2;
 
-            if (!button_present && line_count <= 3)
+            if (!button_present && line_count <= 3) // Todo
               vertical_offset = std::max(0, vertical_offset - 4);
           }
           else
@@ -2646,54 +2663,55 @@ display:
             switch (current_phase)
             {
               case ScrollPhase::PAUSED_AT_TOP:
+              {
+                scroll_position = 0.0f;
+
                 if (time_in_phase >= PAUSE_AT_TOP)
                 {
                   current_phase = ScrollPhase::SCROLLING_DOWN;
                   phase_start_time = now;
-                  phase_start_scroll = 0.0f;
                 }
-                scroll_position = 0.0f;
                 break;
+              }
 
               case ScrollPhase::SCROLLING_DOWN:
               {
                 bool scroll_complete = false;
                 scroll_position = calculate_scroll_with_easing(
-                  phase_start_scroll, max_scroll, SCROLL_SPEED_DOWN,
+                  0.0f, max_scroll, SCROLL_SPEED_DOWN,
                   EASE_TIME_DOWN, time_in_phase, 1, scroll_complete);
 
                 if (scroll_complete)
                 {
                   current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
                   phase_start_time = now;
-                  phase_start_scroll = scroll_position;
                 }
-                scroll_position = std::max(0.0f, std::min(scroll_position, max_scroll));
                 break;
               }
 
               case ScrollPhase::PAUSED_AT_BOTTOM:
+              {
+                scroll_position = max_scroll;
+
                 if (time_in_phase >= PAUSE_AT_BOTTOM)
                 {
                   current_phase = ScrollPhase::SCROLLING_UP;
                   phase_start_time = now;
-                  phase_start_scroll = max_scroll;
                 }
-                scroll_position = max_scroll;
                 break;
+              }
 
               case ScrollPhase::SCROLLING_UP:
               {
                 bool scroll_complete = false;
                 scroll_position = calculate_scroll_with_easing(
-                  phase_start_scroll, max_scroll, SCROLL_SPEED_UP,
+                  max_scroll, max_scroll, SCROLL_SPEED_UP,
                   EASE_TIME_UP, time_in_phase, -1, scroll_complete);
 
                 if (scroll_complete)
                 {
                   current_phase = ScrollPhase::PAUSED_AT_TOP;
                   phase_start_time = now;
-                  phase_start_scroll = scroll_position;
                 }
                 scroll_position = std::max(0.0f, std::min(scroll_position, max_scroll));
                 break;
