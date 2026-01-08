@@ -532,7 +532,7 @@ globals:
 
   # --- Custom Notification System ---
   - id: notification_title
-    type: std::string
+    type: std::string // Todo no std::string
     restore_value: no
     initial_value: '""'
 
@@ -554,14 +554,14 @@ globals:
   - id: notification_show_border
     type: bool
     restore_value: no
-    initial_value: "true"
+    initial_value: "false"
 
   - id: notification_button_text
     type: std::string
     restore_value: no
     initial_value: '""'
 
-  - id: notification_needs_scroll_reset
+  - id: notification_needs_update
     type: bool
     restore_value: no
     initial_value: "false"
@@ -959,11 +959,12 @@ script:
 
           id(notification_title) = title;
           id(notification_message) = message;
+          id(notification_button_text) = button_text;
           id(notification_timeout) = timeout;
           id(notification_show_border) = show_border;
-          id(notification_button_text) = button_text;
+
           id(notification_start_time) = millis();
-          id(notification_needs_scroll_reset) = true;
+          id(notification_needs_update) = true;
 
           id(is_menu_detail_visible) = false;
           id(is_menu_visible) = false;
@@ -2219,7 +2220,7 @@ display:
       - id: page_notification
         lambda: |-
           // ============================================
-          // Configuration
+          // Configuration Constants
           // ============================================
           static constexpr uint8_t TEXT_START_Y = 16;
           static constexpr uint8_t TEXT_CLIP_TOP = 18;
@@ -2289,6 +2290,7 @@ display:
           {
             int bx, by, bw, bh;
             it.get_text_bounds(0, 0, text, font, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+
             return (bw <= max_width);
           };
 
@@ -2309,7 +2311,7 @@ display:
             }
 
             // Check if text fits (unless forced to add ellipsis)
-            if (!force_ellipsis && text_fits(input, font, max_width))
+            if (text_fits(input, font, max_width) && !force_ellipsis)
             {
               strncpy(output, input, output_buffer_size - 1);
               output[output_buffer_size - 1] = '\0';
@@ -2364,6 +2366,7 @@ display:
             float ideal_ease = 0.5f * speed * ease_time;
             float ease_dist = (distance < 2.0f * ideal_ease) ? (distance * 0.5f) : ideal_ease;
             float linear_dist = distance - (2.0f * ease_dist);
+
             if (linear_dist < 0.0f)
               linear_dist = 0.0f;
 
@@ -2371,6 +2374,7 @@ display:
             float total_time = ease_time + linear_time + ease_time;
 
             is_complete = (time_elapsed >= total_time);
+
             if (is_complete)
               return std::clamp(start_pos + direction * distance, 0.0f, distance);
 
@@ -2378,16 +2382,19 @@ display:
 
             if (time_elapsed < ease_time)
             {
+              // Ease in
               float progress = time_elapsed / ease_time;
               position += direction * (ease_in(progress) / ease_in_scale) * ease_dist;
             }
             else if (time_elapsed < ease_time + linear_time)
             {
+              // Linear speed
               float linear_progress = time_elapsed - ease_time;
               position += direction * (ease_dist + linear_progress * speed);
             }
             else
             {
+              // Ease out
               float progress = (time_elapsed - ease_time - linear_time) / ease_time;
               position += direction * (ease_dist + linear_dist +
                                     ((ease_out(progress) - ease_out_start) / ease_out_scale) * ease_dist);
@@ -2400,77 +2407,73 @@ display:
           enum class ScrollPhase : uint8_t
           {
             PAUSED_AT_TOP = 0,
-            SCROLLING_DOWN = 1,
-            PAUSED_AT_BOTTOM = 2,
-            SCROLLING_UP = 3
+            SCROLLING_DOWN,
+            PAUSED_AT_BOTTOM,
+            SCROLLING_UP
           };
 
           // ============================================
           // Persistent State Variables
           // ============================================
-          static char cached_message[1024];
-          static char cached_button[64];
           static char lines[MAX_LINES][LINE_BUFFER_SIZE];
+          static char title_buffer[LINE_BUFFER_SIZE];
+          static char button_buffer[LINE_BUFFER_SIZE];
+
           static uint8_t line_count = 0;
-          static esphome::font::Font* font = id(font6x12);
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
+          static esphome::font::Font* message_font = id(font6x12);
 
-          static float scroll_position = 0.0f;
-          static uint32_t phase_start_time = 0;
-          static ScrollPhase current_phase = ScrollPhase::PAUSED_AT_TOP;
-
-          static uint16_t total_height = 0;
-          static float max_scroll = 0.0f;
+          static ScrollPhase current_scroll_phase = ScrollPhase::PAUSED_AT_TOP;
+          static float    scroll_position = 0.0f;
+          static uint32_t scroll_phase_start_time = 0;
+          static uint16_t total_message_height = 0;
+          static float    total_scroll_distance = 0.0f;
 
           // ============================================
-          // Get Current Frame Data
+          // Get Current State
           // ============================================
-          const char* message = id(notification_message).c_str();
-          const char* button = id(notification_button_text).c_str();
-          uint32_t now = millis();
-          bool button_present = (button[0] != '\0');
-          uint8_t content_bottom = button_present ?
-                                    (CONTENT_BOTTOM_WITH_BUTTON) :
-                                    (id(notification_show_border) ? // More spacing if frame is visible
-                                      CONTENT_BOTTOM - 3 : CONTENT_BOTTOM);
+          uint32_t    now = millis();
+          static bool button_present = !id(notification_button_text).empty();
+          uint8_t     content_bottom = button_present ? CONTENT_BOTTOM_WITH_BUTTON : CONTENT_BOTTOM;
+
+          if (!button_present && id(notification_show_border))
+            content_bottom -= 3; // Less available space if border is visible (and no button)
+
           uint8_t available_height = content_bottom - TEXT_START_Y;
 
           // ============================================
-          // Handle Manual Reset Request
+          // Process New Notification
           // ============================================
-          if (id(notification_needs_scroll_reset))
+          if (id(notification_needs_update))
           {
-            id(notification_needs_scroll_reset) = false;
+            const char* message = id(notification_message).c_str();
+            const char* button = id(notification_button_text).c_str();
+            const char* title = id(notification_title).c_str();
+
+            // Reset scroll state
             line_count = 0;
             scroll_position = 0.0f;
-            phase_start_time = now;
-            current_phase = ScrollPhase::PAUSED_AT_TOP;
-            cached_message[0] = '\0';
-            cached_button[0] = '\0';
-          }
+            scroll_phase_start_time = now;
+            current_scroll_phase = ScrollPhase::PAUSED_AT_TOP;
 
-          // ============================================
-          // Detect Content Changes and Re-wrap Text
-          // ============================================
-          bool message_changed = (strcmp(message, cached_message) != 0);
-          bool button_changed = (strcmp(button, cached_button) != 0);
+            // ============================================
+            // Process Title and Button with Ellipsis
+            // ============================================
+            add_ellipsis_if_needed(title, title_buffer, sizeof(title_buffer), id(font_ui_15_bold), 120);
 
-          if (message_changed || button_changed)
-          {
-            strncpy(cached_message, message, sizeof(cached_message) - 1);
-            cached_message[sizeof(cached_message) - 1] = '\0';
-            strncpy(cached_button, button, sizeof(cached_button) - 1);
-            cached_button[sizeof(cached_button) - 1] = '\0';
+            if (button_present)
+              add_ellipsis_if_needed(button, button_buffer, sizeof(button_buffer), id(font7x13B), 115);
+            else
+              button_buffer[0] = '\0';
 
-            scroll_position = 0.0f;
-            current_phase = ScrollPhase::PAUSED_AT_TOP;
-            phase_start_time = now;
-
-            // Try large font first, fall back to small if content doesn't fit
+            // ============================================
+            // Process Message
+            // ============================================
+            // Try large font first, fall back to small font if content doesn't fit
             for (uint8_t attempt = 0; attempt <= 1; attempt++)
             {
               bool use_large = (attempt == 0);
-              font = use_large ? id(font7x13) : id(font6x12);
+              message_font = use_large ? id(font7x13) : id(font6x12);
               line_spacing = use_large ? LARGE_FONT_LINE_SPACING : SMALL_FONT_LINE_SPACING;
               line_count = 0;
 
@@ -2479,13 +2482,14 @@ display:
               // ============================================
               static auto flush_line = [&](char* line_buffer, size_t len) -> void
               {
-                if (line_count < MAX_LINES)
-                {
-                  line_buffer[len] = '\0';
-                  strncpy(lines[line_count], line_buffer, LINE_BUFFER_SIZE - 1);
-                  lines[line_count][LINE_BUFFER_SIZE - 1] = '\0';
-                  line_count++;
-                }
+                // Check if there is still space for adding a line
+                if (line_count >= MAX_LINES)
+                  return;
+
+                line_buffer[len] = '\0';
+                strncpy(lines[line_count], line_buffer, LINE_BUFFER_SIZE - 1);
+                lines[line_count][LINE_BUFFER_SIZE - 1] = '\0';
+                line_count++;
               };
 
               static auto line_has_only_spaces = [](const char* line, size_t len) -> bool
@@ -2505,9 +2509,7 @@ display:
               char current_line[LINE_BUFFER_SIZE];
               size_t line_len = 0;
               current_line[0] = '\0';
-
               const char* p = message;
-              bool  message_truncated = false;
 
               while (*p != '\0' && line_count < MAX_LINES)
               {
@@ -2548,7 +2550,7 @@ display:
                   memcpy(test + line_len, token_start, token_len);
                   test[needed_len] = '\0';
 
-                  if (text_fits(test, font, MAX_LINE_WIDTH))
+                  if (text_fits(test, message_font, MAX_LINE_WIDTH))
                   {
                     // Token fits completely, add it to current line
                     memcpy(current_line + line_len, token_start, token_len);
@@ -2581,7 +2583,7 @@ display:
                     memcpy(test, token_start, token_len);
                     test[token_len] = '\0';
 
-                    if (text_fits(test, font, MAX_LINE_WIDTH))
+                    if (text_fits(test, message_font, MAX_LINE_WIDTH))
                     {
                       // Remove trailing space (word separator at line break)
                       if (current_line[line_len - 1] == ' ')
@@ -2617,7 +2619,7 @@ display:
                   test[line_len] = *p;
                   test[line_len + 1] = '\0';
 
-                  if (text_fits(test, font, MAX_LINE_WIDTH))
+                  if (text_fits(test, message_font, MAX_LINE_WIDTH))
                   {
                     // Character fits
                     current_line[line_len] = *p;
@@ -2643,33 +2645,28 @@ display:
                 }
               }
 
-              // === Save any remaining content ===
-              if (line_len > 0 && line_count < MAX_LINES)
+              // === Save any remaining content in current line ===
+              if (line_len > 0)
                 flush_line(current_line, line_len);
-
-              // Check if message has been truncated
-              if (line_count == MAX_LINES && *p != '\0')
-                message_truncated = true;
 
               // ============================================
               // Add Ellipsis If Message Was Truncated
               // ============================================
-              if (message_truncated && line_count > 0)
-              {
-                uint8_t last_idx = line_count - 1;
-                add_ellipsis_if_needed(lines[last_idx], lines[last_idx], LINE_BUFFER_SIZE, font, MAX_LINE_WIDTH, true);
-              }
+              if (line_count == MAX_LINES && *p != '\0')
+                add_ellipsis_if_needed(lines[line_count - 1], lines[line_count - 1], LINE_BUFFER_SIZE, message_font, MAX_LINE_WIDTH, true);
 
-              total_height = line_count * line_spacing;
+              total_message_height = line_count * line_spacing;
 
               // Use this font if content fits, otherwise try smaller
-              if (total_height <= available_height)
+              if (total_message_height <= available_height)
                 break;
             }
 
-            max_scroll = (total_height > available_height)
-                        ? (total_height - available_height + BOTTOM_GAP)
+            total_scroll_distance = (total_message_height > available_height)
+                        ? (total_message_height - available_height + BOTTOM_GAP)
                         : 0.0f;
+
+            id(notification_needs_update) = false;
           }
 
           // ============================================
@@ -2677,10 +2674,10 @@ display:
           // ============================================
           int16_t vertical_offset = 0;
 
-          if (max_scroll <= 0.0f)
+          if (total_scroll_distance <= 0.0f)
           {
             // No scrolling necessary
-            vertical_offset = (available_height - total_height) / 2;
+            vertical_offset = (available_height - total_message_height) / 2;
 
             if (!button_present && line_count <= 3) // Todo
               vertical_offset = std::max(0, vertical_offset - 4);
@@ -2688,11 +2685,10 @@ display:
           else
           {
             // Do scrolling
-            uint32_t elapsed_millis = now - phase_start_time;
-            float time_in_phase = elapsed_millis / 1000.0f;
+            float time_in_phase = (now - scroll_phase_start_time) / 1000.0f;
 
             // Scrolling state machine
-            switch (current_phase)
+            switch (current_scroll_phase)
             {
               case ScrollPhase::PAUSED_AT_TOP:
               {
@@ -2700,8 +2696,8 @@ display:
 
                 if (time_in_phase >= PAUSE_AT_TOP)
                 {
-                  current_phase = ScrollPhase::SCROLLING_DOWN;
-                  phase_start_time = now;
+                  current_scroll_phase = ScrollPhase::SCROLLING_DOWN;
+                  scroll_phase_start_time = now;
                 }
                 break;
               }
@@ -2710,25 +2706,25 @@ display:
               {
                 bool scroll_complete = false;
                 scroll_position = calculate_scroll_with_easing(
-                  0.0f, max_scroll, SCROLL_SPEED_DOWN,
+                  0.0f, total_scroll_distance, SCROLL_SPEED_DOWN,
                   EASE_TIME_DOWN, time_in_phase, 1, scroll_complete);
 
                 if (scroll_complete)
                 {
-                  current_phase = ScrollPhase::PAUSED_AT_BOTTOM;
-                  phase_start_time = now;
+                  current_scroll_phase = ScrollPhase::PAUSED_AT_BOTTOM;
+                  scroll_phase_start_time = now;
                 }
                 break;
               }
 
               case ScrollPhase::PAUSED_AT_BOTTOM:
               {
-                scroll_position = max_scroll;
+                scroll_position = total_scroll_distance;
 
                 if (time_in_phase >= PAUSE_AT_BOTTOM)
                 {
-                  current_phase = ScrollPhase::SCROLLING_UP;
-                  phase_start_time = now;
+                  current_scroll_phase = ScrollPhase::SCROLLING_UP;
+                  scroll_phase_start_time = now;
                 }
                 break;
               }
@@ -2737,15 +2733,14 @@ display:
               {
                 bool scroll_complete = false;
                 scroll_position = calculate_scroll_with_easing(
-                  max_scroll, max_scroll, SCROLL_SPEED_UP,
+                  total_scroll_distance, total_scroll_distance, SCROLL_SPEED_UP,
                   EASE_TIME_UP, time_in_phase, -1, scroll_complete);
 
                 if (scroll_complete)
                 {
-                  current_phase = ScrollPhase::PAUSED_AT_TOP;
-                  phase_start_time = now;
+                  current_scroll_phase = ScrollPhase::PAUSED_AT_TOP;
+                  scroll_phase_start_time = now;
                 }
-                scroll_position = std::max(0.0f, std::min(scroll_position, max_scroll));
                 break;
               }
             }
@@ -2754,38 +2749,25 @@ display:
           // ============================================
           // Render Notification
           // ============================================
-
           // Border
           if (id(notification_show_border))
             it.rectangle(0, 0, 128, 64);
 
-          // ============================================
-          // Title with ellipsis if needed
-          char title_buffer[LINE_BUFFER_SIZE];
-          const char* title = id(notification_title).c_str();
-          add_ellipsis_if_needed(title, title_buffer, sizeof(title_buffer), id(font_ui_15_bold), 120);
-
+          // Title
           it.printf(64, -3, id(font_ui_15_bold), TextAlign::TOP_CENTER, "%s", title_buffer);
 
-          // ============================================
-          // Message text
+          // Message
           it.start_clipping(0, TEXT_CLIP_TOP, 128, content_bottom);
-
           for (uint8_t i = 0; i < line_count; i++)
           {
             int16_t y = TEXT_START_Y + vertical_offset + (i * line_spacing) - scroll_position;
-            it.printf(64, y, font, TextAlign::TOP_CENTER, "%s", lines[i]);
+            it.printf(64, y, message_font, TextAlign::TOP_CENTER, "%s", lines[i]);
           }
-
           it.end_clipping();
 
-          // ============================================
-          // Button with ellipsis if needed
+          // Button
           if (button_present)
           {
-            char button_buffer[LINE_BUFFER_SIZE];
-            add_ellipsis_if_needed(button, button_buffer, sizeof(button_buffer), id(font7x13B), 115);
-
             int bx, by, bw, bh;
             it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
             uint16_t button_width = std::min((uint16_t)(bw + 11), (uint16_t)126);
@@ -2903,7 +2885,6 @@ display:
           else
             it.printf(122, 64, id(font6x12), TextAlign::BOTTOM_RIGHT, "eCO2: ---");
 
-
       # TVOC
       - id: page_menu_history_tvoc
         lambda: |-
@@ -2968,12 +2949,12 @@ display:
           }
 
           // ——— Visual step indicators (bottom row) ———
-          const int32_t TOTAL_DOTS  = (seconds >= 60 && seconds <= 600) ? 10 : 11;
+          const int32_t NUM_TOTAL_DOTS  = (seconds >= 60 && seconds <= 600) ? 10 : 11;
           const int32_t DOT_SPACING = 10;
-          const int32_t DOT_X_START = 64 - ( ((TOTAL_DOTS - 1) * DOT_SPACING) / 2 );
+          const int32_t DOT_X_START = 64 - ( ((NUM_TOTAL_DOTS - 1) * DOT_SPACING) / 2 );
           const int32_t DOT_Y       = 60;
 
-          for (int32_t i = 0; i < TOTAL_DOTS; i++)
+          for (int32_t i = 0; i < NUM_TOTAL_DOTS; i++)
           {
             int32_t x = DOT_X_START + i * DOT_SPACING;
             bool active = false;
@@ -3029,19 +3010,19 @@ display:
           }
 
           // ——— Visual step indicators (bottom row) ———
-          int32_t TOTAL_DOTS;
+          int32_t num_total_dots;
           if (minutes <= 9)
-            TOTAL_DOTS = 9;
+            num_total_dots = 9;
           else if (minutes > 9 && minutes <= 50)
-            TOTAL_DOTS = 5;
+            num_total_dots = 5;
           else if (minutes > 50)
-            TOTAL_DOTS = 12;
+            num_total_dots = 12;
 
           const int32_t DOT_SPACING = 10;
-          const int32_t DOT_X_START = 64 - ( ((TOTAL_DOTS - 1) * DOT_SPACING) / 2 );
+          const int32_t DOT_X_START = 64 - ( ((num_total_dots - 1) * DOT_SPACING) / 2 );
           const int32_t DOT_Y       = 60;
 
-          for (int32_t i = 0; i < TOTAL_DOTS; i++)
+          for (int32_t i = 0; i < num_total_dots; i++)
           {
             int32_t x = DOT_X_START + i * DOT_SPACING;
             bool active = false;
@@ -3433,16 +3414,16 @@ graphical_display_menu:
               else
               {
                 // Scroll logic
-                int16_t max_scroll = text_length - DISPLAY_WIDTH;
+                int16_t total_scroll_distance = text_length - DISPLAY_WIDTH;
 
                 if (scrolling_right)
                 {
                   scroll_pos += SCROLL_SPEED_FWD;
 
                   // Reached the end, start going back
-                  if (scroll_pos >= max_scroll)
+                  if (scroll_pos >= total_scroll_distance)
                   {
-                    scroll_pos = max_scroll;
+                    scroll_pos = total_scroll_distance;
                     scrolling_right = false;
                     pause_counter = PAUSE_AT_END;
                   }
@@ -4071,13 +4052,13 @@ text_sensor:
               if (root["message"].is<const char*>())
                 message = root["message"].as<const char*>();
 
-              // Support timeout as int and string
+              // Support "timeout" as int and string
               if (root["timeout"].is<uint32_t>())
                 timeout = max(root["timeout"].as<uint32_t>(), 0ul);
               else if (root["timeout"].is<const char*>())
                 timeout = max(atoi(root["timeout"].as<const char*>()), 0);
 
-              // Support show_border as bool, string or int (false, "false", 0, "0")
+              // Support "show_border" as bool, string or int (false, "false", 0, "0")
               if (root["show_border"].is<bool>())
               {
                 show_border = root["show_border"].as<bool>();
