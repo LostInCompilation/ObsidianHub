@@ -2772,7 +2772,7 @@ display:
             int bx, by, bw, bh;
             it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
 
-            uint16_t button_width = std::min(bw + 11, MAX_BUTTON_TEXT_WIDTH + 11);
+            uint16_t button_width = bw + 11;
             uint8_t button_x = 64 - (button_width / 2);
 
             it.filled_rectangle(button_x - 1, 51, button_width, 11);
