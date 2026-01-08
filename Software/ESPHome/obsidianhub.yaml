@@ -532,7 +532,7 @@ globals:
 
   # --- Custom Notification System ---
   - id: notification_title
-    type: std::string // Todo no std::string
+    type: std::string # Todo no std::string
     restore_value: no
     initial_value: '""'
 
@@ -2232,6 +2232,8 @@ display:
           static constexpr uint8_t LARGE_FONT_LINE_SPACING = 12;
           static constexpr uint8_t SMALL_FONT_LINE_SPACING = 10;
           static constexpr uint8_t BOTTOM_GAP = 5;
+          static constexpr uint8_t MAX_TITLE_WIDTH = 120;
+          static constexpr uint8_t MAX_BUTTON_TEXT_WIDTH = 115;
 
           // Scroll animation timing
           static constexpr float SCROLL_SPEED_DOWN = 12.0f;
@@ -2416,8 +2418,8 @@ display:
           // Persistent State Variables
           // ============================================
           static char lines[MAX_LINES][LINE_BUFFER_SIZE];
-          static char title_buffer[LINE_BUFFER_SIZE];
-          static char button_buffer[LINE_BUFFER_SIZE];
+          static char title_buffer[LINE_BUFFER_SIZE] = {0};
+          static char button_buffer[LINE_BUFFER_SIZE] = {0};
 
           static uint8_t line_count = 0;
           static uint8_t line_spacing = SMALL_FONT_LINE_SPACING;
@@ -2459,12 +2461,10 @@ display:
             // ============================================
             // Process Title and Button with Ellipsis
             // ============================================
-            add_ellipsis_if_needed(title, title_buffer, sizeof(title_buffer), id(font_ui_15_bold), 120);
+            add_ellipsis_if_needed(title, title_buffer, sizeof(title_buffer), id(font_ui_15_bold), MAX_TITLE_WIDTH);
 
             if (button_present)
-              add_ellipsis_if_needed(button, button_buffer, sizeof(button_buffer), id(font7x13B), 115);
-            else
-              button_buffer[0] = '\0';
+              add_ellipsis_if_needed(button, button_buffer, sizeof(button_buffer), id(font7x13B), MAX_BUTTON_TEXT_WIDTH);
 
             // ============================================
             // Process Message
@@ -2768,9 +2768,11 @@ display:
           // Button
           if (button_present)
           {
+            // Todo: only calc once on update
             int bx, by, bw, bh;
             it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
-            uint16_t button_width = std::min((uint16_t)(bw + 11), (uint16_t)126);
+
+            uint16_t button_width = std::min(bw + 11, MAX_BUTTON_TEXT_WIDTH + 11);
             uint8_t button_x = 64 - (button_width / 2);
 
             it.filled_rectangle(button_x - 1, 51, button_width, 11);
