@@ -11,19 +11,19 @@
 
 # ToDo:
 #
-# - BUG: scrolling easin in to linear speed has sudden accelaration jump
+# - BUG: scrolling easing in to linear speed has sudden accelaration jump
 #
 # - Do not lock up on ota update error. Show reboot button
 # - Rising/falling trends
 # - Timer
-# - Brightness sync on boot fix
+# - Brightness sync on boot fix (low prio)
 # - Graph range and grid
 # - Graph show min max values
 # - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
 
 # Notification:
-# Check ignore interactions on notification page!
-# Auto font size (bigger font if short message)
+# - Check ignore interactions on notification page!
+# - Auto font size (bigger font if short message)
 
 ###############################################################
 # Substitutions
@@ -31,7 +31,7 @@
 substitutions:
   # ----------------------------------
   # Firmware Version
-  version: "1.1.1"
+  version: "1.2.0"
 
   # ----------------------------------
   # Custom build configuration for clients/users
@@ -389,6 +389,12 @@ spi:
 # Global Variables
 ###############################################################
 globals:
+  # --- Total on time ---
+  - id: total_device_on_time_ms
+    type: uint64_t
+    restore_value: yes
+    initial_value: "0"
+
   # --- OTA Progress ---
   - id: ota_progress
     type: float
@@ -1202,6 +1208,18 @@ script:
 # Intervals (Periodic Tasks)
 ###############################################################
 interval:
+  # Total device on time counter
+  - interval: 5s
+    then:
+      - lambda: |-
+          static uint32_t last_time = 0;
+          uint32_t now = millis();
+
+          uint32_t elapsed = now - last_time;
+          id(total_device_on_time_ms) += (uint64_t)elapsed;
+
+          last_time = now;
+
   # Update boot animation frames
   - interval: 12ms
     then:
@@ -2113,7 +2131,7 @@ display:
           const int32_t TICKER_Y = 63;
           const char* SEPARATOR = "  |  ";
 
-          static int32_t ticker_offset = 126; // Start position
+          static int32_t ticker_offset = 80; // Start position
           static int32_t ticker_width = 0;
           static int32_t last_scroll_time = 0;
           static char ticker_text[372] = "";
@@ -2435,7 +2453,7 @@ display:
           // Get Current State
           // ============================================
           uint32_t    now = millis();
-          static bool button_present = !id(notification_button_text).empty();
+          bool        button_present = id(notification_button_text).c_str()[0] != '\0';
           uint8_t     content_bottom = button_present ? CONTENT_BOTTOM_WITH_BUTTON : CONTENT_BOTTOM;
 
           if (!button_present && id(notification_show_border))
@@ -2775,7 +2793,6 @@ display:
           // Button
           if (button_present)
           {
-            // Todo: only calc once on update
             int bx, by, bw, bh;
             it.get_text_bounds(0, 0, button_buffer, id(font7x13B), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
 
@@ -3114,8 +3131,14 @@ display:
           it.printf(75, -2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "System Info");
 
           // Free memory
-          it.printf(1, 26, id(font7x13), TextAlign::TOP_LEFT, "Free RAM:");
-          it.printf(127, 26, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
+          it.printf(1, 22, id(font7x13), TextAlign::TOP_LEFT, "Free RAM:");
+          it.printf(127, 22, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
+
+          // Total on time
+          float days = (float)id(total_device_on_time_ms) / 1000.0f / 60.0f / 60.0f / 24.0f;
+          uint32_t total_on_days = lround(days);
+          it.printf(63, 39, id(font7x13B), TextAlign::TOP_CENTER, "Total On Time");
+          it.printf(63, 51, id(font7x13), TextAlign::TOP_CENTER, "%u Days", total_on_days);
 
       # ============================================
       # MENU DETAIL: WiFi Status
@@ -3335,7 +3358,7 @@ graphical_display_menu:
           off_text: "OFF"
           switch: switch_invert_display
 
-     # Sub-Menu: Info
+    # Sub-Menu: Info
     - type: menu
       text: "Info"
       items:
