@@ -2523,6 +2523,13 @@ display:
                   continue;
                 }
 
+                // Skip control characters and non-printable chars
+                if ((*p >= 0x00 && *p < 0x20) || *p == 0x7F)
+                {
+                  p++;
+                  continue;
+                }
+
                 // === Extract next token (word or consecutive spaces) ===
                 const char* token_start = p;
                 const char* token_end = p;
@@ -3380,74 +3387,64 @@ graphical_display_menu:
         - type: command
           text: !lambda |-
             static char buf[48];
-            static float scroll_pos = 0.0f;
+            static float scroll_offset = 0.0f;
             static uint32_t last_update = 0;
-            static uint8_t pause_counter = 0;
-            static bool scrolling_right = true;
+            static uint8_t pause_frames = 0;
+            static bool moving_forward = true;
 
             const uint8_t DISPLAY_WIDTH = 17;
-            const uint8_t SCROLL_INTERVAL = 50;      // ms between scroll updates
-            const uint8_t PAUSE_AT_START = 15;       // frames to pause at beginning
-            const uint8_t PAUSE_AT_END = 20;         // frames to pause at end
-            const float SCROLL_SPEED_FWD = 0.25f;    // chars per frame going right
-            const float SCROLL_SPEED_BACK = 0.6f;    // chars per frame going left
+            const uint8_t SCROLL_INTERVAL_MS = 50;
+            const uint8_t NUM_PAUSE_FRAMES_AT_START = 20;
+            const uint8_t NUM_PAUSE_FRAMES_AT_END = 25;
+            const float SPEED_FORWARD = 0.25f;
+            const float SPEED_BACKWARD = 0.6f;
 
-            std::string full_text = "Uptime: " + id(text_sensor_uptime).state;
-            int16_t text_length = full_text.length();
+            // Build full text string
+            snprintf(buf, sizeof(buf), "Uptime: %s", id(text_sensor_uptime).state.c_str());
+            int16_t text_length = strlen(buf);
 
             // No scrolling needed for short text
             if (text_length <= DISPLAY_WIDTH)
-            {
-              snprintf(buf, sizeof(buf), "%s", full_text.c_str());
               return buf;
-            }
 
             // Update scroll position at regular intervals
             uint32_t now = millis();
-            if (now - last_update > SCROLL_INTERVAL)
+            if (now - last_update > SCROLL_INTERVAL_MS)
             {
               last_update = now;
 
-              // Handle pause at ends
-              if (pause_counter > 0)
+              if (pause_frames > 0)
               {
-                pause_counter--;
+                pause_frames--;
               }
               else
               {
-                // Scroll logic
-                int16_t total_scroll_distance = text_length - DISPLAY_WIDTH;
+                int16_t max_offset = text_length - DISPLAY_WIDTH;
 
-                if (scrolling_right)
+                // Move in current direction
+                scroll_offset += moving_forward ? SPEED_FORWARD : -SPEED_BACKWARD;
+
+                // Check boundaries and reverse direction if needed
+                if (moving_forward && scroll_offset >= max_offset)
                 {
-                  scroll_pos += SCROLL_SPEED_FWD;
-
-                  // Reached the end, start going back
-                  if (scroll_pos >= total_scroll_distance)
-                  {
-                    scroll_pos = total_scroll_distance;
-                    scrolling_right = false;
-                    pause_counter = PAUSE_AT_END;
-                  }
+                  scroll_offset = max_offset;
+                  moving_forward = false;
+                  pause_frames = NUM_PAUSE_FRAMES_AT_END;
                 }
-                else
+                else if (!moving_forward && scroll_offset <= 0)
                 {
-                  scroll_pos -= SCROLL_SPEED_BACK;
-
-                  // Reached the beginning, start going forward
-                  if (scroll_pos <= 0)
-                  {
-                    scroll_pos = 0;
-                    scrolling_right = true;
-                    pause_counter = PAUSE_AT_START;
-                  }
+                  scroll_offset = 0;
+                  moving_forward = true;
+                  pause_frames = NUM_PAUSE_FRAMES_AT_START;
                 }
               }
             }
 
-            // Render visible part
-            int16_t start_pos = (int16_t)scroll_pos;
-            snprintf(buf, sizeof(buf), "%s", full_text.substr(start_pos, DISPLAY_WIDTH).c_str());
+            // Render visible window
+            int16_t start_index = (int16_t)scroll_offset;
+            memmove(buf, buf + start_index, DISPLAY_WIDTH);
+            buf[DISPLAY_WIDTH] = '\0';
+
             return buf;
 
 ###############################################################
