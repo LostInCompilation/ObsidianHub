@@ -1404,7 +1404,7 @@ interval:
   - interval: 75ms
     then:
       - lambda: |-
-          static const uint32_t BOOT_LOGO_HOLD_MS = 4800;
+          static const uint32_t BOOT_LOGO_HOLD_MS = 900;
           static const uint32_t FADE_DURATION_MS = 700;
           static const float GAMMA = 2.5f;  // Human eye perception correction
           static const float INV_FADE_DURATION = 1.0f / FADE_DURATION_MS;
@@ -1437,15 +1437,21 @@ interval:
               const float progress = elapsed * INV_FADE_DURATION;
               const float correctedValue = pow(progress, GAMMA);
 
-              if (elapsed < FADE_DURATION_MS && correctedValue < id(display_brightness))
+              if (elapsed < FADE_DURATION_MS && correctedValue <= id(display_brightness))
               {
                 id(main_display).set_contrast(correctedValue);
               }
               else
               {
-                fade_done = true;
-                hold_start = now;
+                // Set finaL display brightness
                 id(main_display).set_contrast(id(display_brightness));
+
+                // Wait for animation to finish before starting hold phase
+                if (id(animation_boot).get_current_frame() >= id(animation_boot).get_animation_frame_count() - 1)
+                {
+                  fade_done = true;
+                  hold_start = now;
+                }
               }
             }
             else if (now - hold_start >= BOOT_LOGO_HOLD_MS) // Hold phase complete
@@ -2704,8 +2710,16 @@ display:
             // No scrolling necessary
             vertical_offset = (available_height - total_message_height) / 2;
 
-            if (!button_present && line_count <= 3) // Todo
-              vertical_offset = std::max(0, vertical_offset - 4);
+            // Special y-position of message if max 3 lines and no button present
+            if (!button_present && line_count <= 3)
+            {
+              if (line_count == 1)
+                vertical_offset = std::max(0, vertical_offset - 8);
+              else if (line_count == 2)
+                vertical_offset = std::max(0, vertical_offset - 6);
+              else if (line_count <= 3)
+                vertical_offset = std::max(0, vertical_offset - 4);
+            }
           }
           else
           {
