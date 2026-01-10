@@ -20,10 +20,7 @@
 # - Graph range and grid
 # - Graph show min max values
 # - Use new wifi ap enabled check for determining if in ap mode: https://github.com/esphome/esphome/pull/11852
-
-# Notification:
-# - Check ignore interactions on notification page!
-# - Auto font size (bigger font if short message)
+# - Notification: Third, bigger font for very short messages
 
 ###############################################################
 # Substitutions
@@ -77,7 +74,7 @@ esphome:
   name: obsidianhub
   friendly_name: ObsidianHub
   comment: "SmartHome Dashboard with multiple environmental sensors"
-  min_version: 2025.12.0
+  min_version: 2025.12.1
   project:
     name: "Marc.ObsidianHub"
     version: "${version}"
@@ -135,7 +132,7 @@ logger:
 ###############################################################
 api:
   id: component_api
-  batch_delay: 200ms
+  batch_delay: 90ms
   #reboot_timeout: 0s
   encryption:
     key: "${api_encryption_key}"
@@ -526,12 +523,12 @@ globals:
     restore_value: yes
     initial_value: "{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}"
 
-  - id: saved_key1_led_state
+  - id: saved_left_key_led_state
     type: float[5]
     restore_value: yes
     initial_value: "{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}"
 
-  - id: saved_key2_led_state
+  - id: saved_right_key_led_state
     type: float[5]
     restore_value: yes
     initial_value: "{1.0f, 1.0f, 1.0f, 1.0f, 1.0f}"
@@ -623,11 +620,13 @@ font:
   # --- Diverse Elements ---
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13.bdf"
     id: font7x13
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:0123456789\u0025"
+    # Use all glyphs since this font is used for custom notification text
+    # ToDo
+    #glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:0123456789\u0025"
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/7x13B.bdf"
     id: font7x13B
-    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .0123456789"
+    glyphs: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ .:0123456789"
 
   - file: "https://github.com/LostInCompilation/ObsidianHub/raw/main/Software/ESPHome/fonts/bdf/6x12.bdf"
     id: font6x12
@@ -855,8 +854,9 @@ script:
       - lambda: |-
           id(last_interaction_time_ms) = millis();
 
-          // Always set current brightness (needed for auto dim)
-          id(main_display).set_contrast(id(display_brightness));
+          // Always set current brightness if display is on (needed for auto dim)
+          if (!id(is_display_sleeping))
+            id(main_display).set_contrast(id(display_brightness));
 
           // Only wake if currently sleeping or fading out
           if (!id(is_display_sleeping) && !id(is_led_sleeping) && !id(is_fade_out_in_progress))
@@ -1064,29 +1064,29 @@ script:
             call.perform();
           }
 
-          // Restore Key 1 LED
-          if (id(saved_key1_led_state)[4] > 0.0f)
+          // Restore left-key LED
+          if (id(saved_left_key_led_state)[4] > 0.0f)
           {
-            auto call = id(led_key1).turn_on();
+            auto call = id(led_left_key).turn_on();
             call.set_rgb(
-                id(saved_key1_led_state)[1],
-                id(saved_key1_led_state)[2],
-                id(saved_key1_led_state)[3]
+                id(saved_left_key_led_state)[1],
+                id(saved_left_key_led_state)[2],
+                id(saved_left_key_led_state)[3]
             );
-            call.set_brightness(id(saved_key1_led_state)[0]);
+            call.set_brightness(id(saved_left_key_led_state)[0]);
             call.perform();
           }
 
-          // Restore Key 2 LED
-          if (id(saved_key2_led_state)[4] > 0.0f)
+          // Restore right-key LED
+          if (id(saved_right_key_led_state)[4] > 0.0f)
           {
-            auto call = id(led_key2).turn_on();
+            auto call = id(led_right_key).turn_on();
             call.set_rgb(
-                id(saved_key2_led_state)[1],
-                id(saved_key2_led_state)[2],
-                id(saved_key2_led_state)[3]
+                id(saved_right_key_led_state)[1],
+                id(saved_right_key_led_state)[2],
+                id(saved_right_key_led_state)[3]
             );
-            call.set_brightness(id(saved_key2_led_state)[0]);
+            call.set_brightness(id(saved_right_key_led_state)[0]);
             call.perform();
           }
 
@@ -1159,6 +1159,9 @@ script:
                         id(longitude),
                         root["timezone"].is<const char*>() ? root["timezone"].as<const char*>() : "");
 
+                    // Directly fetch wetaher after location has been determined
+                    id(fetch_weather).execute();
+
                     return true;
                   });
           on_error:
@@ -1192,13 +1195,11 @@ script:
                   // Clear previous document
                   id(weather_json_doc).clear();
 
-                  // Parse JSON into global
+                  // Parse JSON into global weather_json_doc
                   DeserializationError error = deserializeJson(id(weather_json_doc), body);
 
                   if (error)
                     ESP_LOGE("fetch_weather", "JSON parsing failed: %s", error.c_str());
-                  else
-                    ESP_LOGI("fetch_weather", "Weather data updated successfully");
           on_error:
             then:
               - lambda: |-
@@ -1310,7 +1311,7 @@ interval:
 
   # Update Weather Data
   - interval: 15min
-    startup_delay: 75s
+    startup_delay: 3min
     then:
       - if:
           condition:
@@ -1336,26 +1337,26 @@ interval:
           id(saved_status_led_state)[2] = current.get_green();
           id(saved_status_led_state)[3] = current.get_blue();
 
-          // Save Key 1 LED state
-          current = id(led_key1).current_values;
-          id(saved_key1_led_state)[0] = current.get_brightness();
-          id(saved_key1_led_state)[1] = current.get_red();
-          id(saved_key1_led_state)[2] = current.get_green();
-          id(saved_key1_led_state)[3] = current.get_blue();
+          // Save left-key LED state
+          current = id(led_left_key).current_values;
+          id(saved_left_key_led_state)[0] = current.get_brightness();
+          id(saved_left_key_led_state)[1] = current.get_red();
+          id(saved_left_key_led_state)[2] = current.get_green();
+          id(saved_left_key_led_state)[3] = current.get_blue();
 
-          // Save Key 2 LED state
-          current = id(led_key2).current_values;
-          id(saved_key2_led_state)[0] = current.get_brightness();
-          id(saved_key2_led_state)[1] = current.get_red();
-          id(saved_key2_led_state)[2] = current.get_green();
-          id(saved_key2_led_state)[3] = current.get_blue();
+          // Save right-key LED state
+          current = id(led_right_key).current_values;
+          id(saved_right_key_led_state)[0] = current.get_brightness();
+          id(saved_right_key_led_state)[1] = current.get_red();
+          id(saved_right_key_led_state)[2] = current.get_green();
+          id(saved_right_key_led_state)[3] = current.get_blue();
 
           // Save is_on() state only when not sleeping LEDs
           if (!id(is_fade_out_in_progress) && !id(is_led_sleeping))
           {
             id(saved_status_led_state)[4] = id(led_status).current_values.is_on() ? 1.0f : 0.0f;
-            id(saved_key1_led_state)[4] = id(led_key1).current_values.is_on() ? 1.0f : 0.0f;
-            id(saved_key2_led_state)[4] = id(led_key2).current_values.is_on() ? 1.0f : 0.0f;
+            id(saved_left_key_led_state)[4] = id(led_left_key).current_values.is_on() ? 1.0f : 0.0f;
+            id(saved_right_key_led_state)[4] = id(led_right_key).current_values.is_on() ? 1.0f : 0.0f;
           }
 
   # Handle WiFi AP mode detection
@@ -1480,12 +1481,12 @@ interval:
                 call.perform();
 
                 // Key LEDs
-                call = id(led_key1).turn_on();
+                call = id(led_left_key).turn_on();
                 call.set_rgb(1.0f, 1.0f, 1.0f);
                 call.set_brightness(0.7f);
                 call.perform();
 
-                call = id(led_key2).turn_on();
+                call = id(led_right_key).turn_on();
                 call.set_rgb(1.0f, 1.0f, 1.0f);
                 call.set_brightness(0.7f);
                 call.perform();
@@ -1567,8 +1568,8 @@ interval:
             if (sleep_leds && timeout_reached && !id(is_led_sleeping))
             {
               id(led_status).turn_off().perform();
-              id(led_key1).turn_off().perform();
-              id(led_key2).turn_off().perform();
+              id(led_left_key).turn_off().perform();
+              id(led_right_key).turn_off().perform();
               id(is_led_sleeping) = true;
             }
           }
@@ -3145,14 +3146,14 @@ display:
           it.printf(75, -2, id(font_ui_18_bold), TextAlign::TOP_CENTER, "System Info");
 
           // Free memory
-          it.printf(1, 22, id(font7x13), TextAlign::TOP_LEFT, "Free RAM:");
-          it.printf(127, 22, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
+          it.printf(1, 28, id(font7x13), TextAlign::TOP_LEFT, "Free RAM:");
+          it.printf(127, 28, id(font7x13B), TextAlign::TOP_RIGHT, "%.1f KB", esp_get_free_heap_size() / 1024.0f);
 
           // Total on time
           float days = (float)id(total_device_on_time_ms) / 1000.0f / 60.0f / 60.0f / 24.0f;
           uint32_t total_on_days = lround(days);
-          it.printf(63, 39, id(font7x13B), TextAlign::TOP_CENTER, "Total On Time");
-          it.printf(63, 51, id(font7x13), TextAlign::TOP_CENTER, "%u Days", total_on_days);
+          it.printf(1, 42, id(font7x13), TextAlign::TOP_LEFT, "Total On:");
+          it.printf(127, 42, id(font7x13B), TextAlign::TOP_RIGHT, "%u %s", total_on_days, total_on_days == 1 ? "Day" : "Days");
 
       # ============================================
       # MENU DETAIL: WiFi Status
@@ -3653,7 +3654,7 @@ light:
 
   - platform: partition
     name: "Left Key LED"
-    id: led_key1
+    id: led_left_key
     restore_mode: ALWAYS_OFF
     segments:
       - id: led_strip_controller
@@ -3662,7 +3663,7 @@ light:
 
   - platform: partition
     name: "Right Key LED"
-    id: led_key2
+    id: led_right_key
     restore_mode: ALWAYS_OFF
     segments:
       - id: led_strip_controller
@@ -4049,6 +4050,22 @@ text_sensor:
       days: "D"
       expand: true
 
+  # Total device on-time
+  - platform: template
+    name: "Total Operating Hours"
+    id: text_sensor_total_device_on_time
+    icon: mdi:clock
+    entity_category: "diagnostic"
+    update_interval: 10min
+    lambda: |-
+      float days = (float)id(total_device_on_time_ms) / 1000.0f / 60.0f / 60.0f / 24.0f;
+      uint32_t total_on_days = lround(days);
+
+      char buffer[32];
+      snprintf(buffer, sizeof(buffer), "%u %s", total_on_days, total_on_days == 1 ? "Day" : "Days");
+
+      return {buffer}; // Return std::string object using uniform initialization
+
   # Convert numeric AQI to descriptive text
   - platform: template
     name: "Air Quality"
@@ -4140,7 +4157,7 @@ binary_sensor:
     pin:
       number: GPIO21
       inverted: true
-    name: "Left Switch"
+    name: "Button Left"
     id: button_left
     use_interrupt: true
     filters:
@@ -4154,7 +4171,7 @@ binary_sensor:
     pin:
       number: GPIO20
       inverted: true
-    name: "Right Switch"
+    name: "Button Right"
     id: button_right
     use_interrupt: true
     filters:
@@ -4168,7 +4185,7 @@ binary_sensor:
     pin:
       number: GPIO6
       inverted: true
-    name: "Encoder Switch"
+    name: "Button Encoder"
     id: button_encoder
     use_interrupt: true
     filters:
