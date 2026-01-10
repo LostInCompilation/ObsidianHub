@@ -42,6 +42,7 @@ If an optional parameter is missing, it's default value will be used.
 - Enable auto sleep on firmware update available notification
 - Fixed auto dimming not working on certain pages
 - Improved IP location detection
+- Weather now updates much faster after boot
 - Fixed display flickering at power on
 - Renamed entities
 - Changed entity icons
