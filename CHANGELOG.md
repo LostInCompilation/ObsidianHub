@@ -1,4 +1,16 @@
-# ObsidianHub Changelog
+# ObsidianHub - Changelog
+
+## v1.2.1
+
+### New
+
+- xxxxxx
+
+### Fixes & Improvements
+
+- Location will be fetched periodically, instead of once at boot-up
+
+---
 
 ## v1.2.0
 
@@ -49,6 +61,8 @@ If an optional parameter is missing, it's default value will be used.
 - Many backend optimizations
 - Bug fixes
 
+---
+
 ## v1.1.1
 
 ### New
@@ -58,6 +72,8 @@ If an optional parameter is missing, it's default value will be used.
 ### Fixes & Improvements
 
 - Optimized intervals for location fetching to improve hangs after boot
+
+---
 
 ## v1.1.0
 
@@ -73,6 +89,8 @@ If an optional parameter is missing, it's default value will be used.
 - Display flickering when rebooting
 - Extended flash write intervals to reduce wear
 - Various minor enhancements and bug fixes
+
+---
 
 ## v1.0.4
 

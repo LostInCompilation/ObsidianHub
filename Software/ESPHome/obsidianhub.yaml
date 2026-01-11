@@ -292,6 +292,9 @@ wifi:
             call.set_rgb(0.0f, 1.0f, 0.0f);
             call.set_brightness(0.8f);
             call.perform();
+
+            // Fetch location on first connect / reconnect
+            id(fetch_location).execute();
           }
 
           id(wifi_has_been_setup_by_user) = true;
@@ -1102,6 +1105,8 @@ script:
           on_response:
             then:
               - lambda: |-
+                  static bool initial_location_fetching = true;
+
                   if (response->status_code != 200 || body.length() == 0)
                   {
                     ESP_LOGE("fetch_location", "Could not fetch location. Bad response or empty body. Response status: %d", response->status_code);
@@ -1159,11 +1164,15 @@ script:
                         id(longitude),
                         root["timezone"].is<const char*>() ? root["timezone"].as<const char*>() : "");
 
-                    // Directly fetch wetaher after location has been determined
-                    id(fetch_weather).execute();
-
                     return true;
                   });
+
+                  // Directly fetch weather if this is the first time trying to fetch location
+                  if (initial_location_fetching)
+                  {
+                    initial_location_fetching = false;
+                    id(fetch_weather).execute();
+                  }
           on_error:
             then:
               - lambda: |-
@@ -1192,7 +1201,7 @@ script:
                     return;
                   }
 
-                  // Clear previous document
+                  // Clear previous JSON document
                   id(weather_json_doc).clear();
 
                   // Parse JSON into global weather_json_doc
@@ -1200,6 +1209,8 @@ script:
 
                   if (error)
                     ESP_LOGE("fetch_weather", "JSON parsing failed: %s", error.c_str());
+                  else
+                    ESP_LOGD("fetch_weather", "Weather fetched successfully");
           on_error:
             then:
               - lambda: |-
@@ -1283,35 +1294,19 @@ interval:
                 if (elapsed >= id(notification_timeout) * 1000)
                   id(return_to_current_dashboard).execute();
 
-  # Fetch location quickly at the beginning
-  - interval: 12s
-    startup_delay: 15s
+  # Update location
+  - interval: 1h # ToDo
+    startup_delay: 30s
     then:
       - if:
           condition:
-            lambda: "return !id(location_fetched) && id(component_wifi).is_connected() && id(wifi_has_been_setup_by_user);"
+            lambda: "return id(component_wifi).is_connected() && id(wifi_has_been_setup_by_user);"
           then:
-            - lambda: |-
-                const uint8_t MAX_RETRIES = 4;
-                static uint8_t attempt = 0;
-
-                if (attempt < MAX_RETRIES && !id(location_fetched))
-                {
-                  // Try to fetch location
-                  id(fetch_location).execute();
-                  attempt++;
-                }
-                else if (attempt >= MAX_RETRIES && attempt != 0xFF)
-                {
-                  ESP_LOGW("fetch_location", "Fetching location failed %d times. Fallback to default location (Berlin, Germany)", MAX_RETRIES);
-
-                  // Prevent printing this message again (end state)
-                  attempt = 0xFF;
-                }
+            - script.execute: fetch_location
 
   # Update Weather Data
   - interval: 15min
-    startup_delay: 3min
+    startup_delay: 5min
     then:
       - if:
           condition:
@@ -4139,6 +4134,10 @@ text_sensor:
               return;
             }
 
+            // Set default title if title is empty
+            if (title.empty())
+              title = "INFO";
+
             // Show notification if we have a message and are not on certain pages
             if (id(main_display).get_active_page() != id(page_is_updating)
                 && id(main_display).get_active_page() != id(page_wifi_ap_mode)
@@ -4390,7 +4389,7 @@ switch:
 
   # Auto Dim Display
   - platform: template
-    name: "Auto Dim"
+    name: "Auto Dim Display"
     id: switch_auto_dim_display
     entity_category: "config"
     icon: mdi:lightbulb-on-60
